@@ -78,7 +78,7 @@ DEFAULT_PARAMS = dict(
     n_gap_samples     = 7,
 
     # Step 3: Fragment graph
-    min_fragment_length = 1,
+    min_fragment_length = 8,
 
     # Step 5: Diffusion
     min_chain_length  = 25,

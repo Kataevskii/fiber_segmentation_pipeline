@@ -9,7 +9,7 @@ from curation_tool.engine import RealDataCurationEngine
 app = Flask(__name__)
 
 engine = RealDataCurationEngine(
-    raw_volume_path='process_data/COLLAGENCROP_003_0000.tif',
+    raw_volume_path='process_data/FULL_0000.tif',
     curated_output_dir='real_train_data/curated_patches',
     cube_size=96
 )
