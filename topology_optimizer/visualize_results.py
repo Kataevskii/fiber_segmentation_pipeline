@@ -16,8 +16,7 @@ from matplotlib.colors import ListedColormap
 def _random_label_cmap(n: int, seed: int = 42) -> ListedColormap:
     """Generate a random colormap for instance labels (label 0 = black)."""
     rng = np.random.default_rng(seed)
-    n_colors = max(2, min(n + 1, 4096))
-    colors = rng.uniform(0.2, 1.0, size=(n_colors, 3))
+    colors = rng.uniform(0.2, 1.0, size=(n + 1, 3))
     colors[0] = [0, 0, 0]   # background = black
     return ListedColormap(colors)
 
@@ -30,7 +29,6 @@ def save_diagnostic_slices(
     out_dir: str,
     n_slices: int = 6,
     axis: int = 0,
-    n_max_label: int | None = None,
 ):
     """
     Save multi-panel diagnostic slices comparing raw / intensity / prediction / GT.
@@ -44,19 +42,13 @@ def save_diagnostic_slices(
     out_dir     : str -- directory to save PNG files
     n_slices    : int -- number of evenly spaced slices along `axis`
     axis        : int -- 0=Z, 1=Y, 2=X
-    n_max_label : int or None -- maximum label ID for colormap sizing
     """
     os.makedirs(out_dir, exist_ok=True)
 
     D = volume.shape[axis]
     slice_indices = np.linspace(D * 0.05, D * 0.95, n_slices, dtype=int)
 
-    if n_max_label is None:
-        n_max_label = 1
-        for sl_idx in slice_indices:
-            sl = pred_inst[sl_idx] if axis == 0 else (pred_inst[:, sl_idx, :] if axis == 1 else pred_inst[:, :, sl_idx])
-            n_max_label = max(n_max_label, int(np.max(sl)))
-
+    n_max_label = int(pred_inst.max())
     cmap_pred = _random_label_cmap(n_max_label)
     cmap_gt   = _random_label_cmap(int(gt_inst.max()) if gt_inst is not None else 1)
 
@@ -136,39 +128,3 @@ def save_metrics_text(metrics: dict, out_path: str):
             else:
                 f.write(f"  {k:<20s}: {v}\n")
     print(f"  [viz] Saved metrics report to {out_path}", flush=True)
-
-
-def export_uint16_tiff(arr: np.ndarray, out_path: str, verbose: bool = True):
-    """
-    Save 3D array as uint16 TIFF with compression (supports memory-mapped and large volumes).
-    Uses chunked / slice-by-slice writing for volumes > 1GB to ensure low peak RAM usage.
-    """
-    import tifffile
-    import time
-    t0 = time.time()
-
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    D = arr.shape[0]
-    total_bytes = arr.size * 2
-    is_big = total_bytes > (2 * 1024 * 1024 * 1024)
-
-    if total_bytes < 1024 * 1024 * 1024:
-        # Fast in-memory write for arrays < 1 GB
-        u16_arr = np.asarray(arr, dtype=np.uint16)
-        tifffile.imwrite(
-            out_path,
-            u16_arr,
-            compression='zlib',
-            metadata={'axes': 'ZYX'},
-            bigtiff=is_big,
-        )
-    else:
-        # Stream slice-by-slice for huge volumes to keep resident RAM near zero
-        with tifffile.TiffWriter(out_path, bigtiff=True) as tif:
-            for z in range(D):
-                slice_u16 = np.asarray(arr[z], dtype=np.uint16)
-                tif.write(slice_u16, contiguous=True, compression='zlib')
-
-    if verbose:
-        size_mb = os.path.getsize(out_path) / (1024 * 1024)
-        print(f"  [export] Saved uint16 TIFF: {out_path} ({size_mb:.1f} MB in {time.time()-t0:.1f}s)", flush=True)

@@ -36,19 +36,15 @@ class IntensityLoss(nn.Module):
         intensity_l1 = (l1_diff * voxel_weights).sum() / voxel_weight_sum
         intensity_loss = intensity_mse + intensity_l1
 
-        # 2. Continuous Soft Centerline Dice Loss (Continuous vs Continuous)
+        # 2. Continuous Centerline Dice Loss
         pos_gt = F.relu(gt_intensity)
         pos_pred = F.relu(pred_intensity)
+        gt_mask = (pos_gt > 0.30).float()
 
-        intersection = (pos_pred * pos_gt).sum()
-        dice_denom = pos_pred.pow(2).sum() + pos_gt.pow(2).sum()
-        soft_dice = (2.0 * intersection + self.eps) / (dice_denom + self.eps)
-        dice_loss = 1.0 - soft_dice
-
-        # Centerline Binary Dice Score for human-readable monitoring (> 0.30)
-        bin_pred = (pos_pred > 0.30).float()
-        bin_gt = (pos_gt > 0.30).float()
-        bin_dice = (2.0 * (bin_pred * bin_gt).sum() + self.eps) / (bin_pred.sum() + bin_gt.sum() + self.eps)
+        intersection = (pos_pred * gt_mask).sum()
+        dice_denom = pos_pred.sum() + gt_mask.sum()
+        dice_score = (2.0 * intersection + self.eps) / (dice_denom + self.eps)
+        dice_loss = 1.0 - dice_score
 
         # 3. Negative Intersection Dip Loss
         neg_gt = F.relu(-gt_intensity)
@@ -65,8 +61,7 @@ class IntensityLoss(nn.Module):
             'loss_total': total_loss.item(),
             'intensity_loss': intensity_loss.item(),
             'dice_loss': dice_loss.item(),
-            'dice_score': bin_dice.item(),
-            'soft_dice': soft_dice.item(),
+            'dice_score': dice_score.item(),
             'neg_loss': neg_intersection_loss.item()
         }
         return total_loss, metrics
@@ -107,7 +102,7 @@ class OrientationLoss(nn.Module):
             mean_angle_rad = torch.acos(torch.clamp(mean_dot, 0.0, 1.0))
             mean_angle_deg = mean_angle_rad * (180.0 / torch.pi)
         else:
-            ori_loss = (pred_dir * 0.0).sum()
+            ori_loss = torch.tensor(0.0, device=pred_dir.device)
             mean_angle_deg = torch.tensor(0.0, device=pred_dir.device)
 
         metrics = {

@@ -4,12 +4,11 @@ run_topology_optimization.py
 Executes the Global Fiber Topology Optimization Pipeline directly on the full volume:
   1. Memory-Mapped Input Volume Loading (0 GB resident RAM for 25 GB orientation field)
   2. 3D Potential Field Thinning & Spur Pruning
-  3. Orientation-Guided Transverse H-Severing
+  3. Orientation-Decoupled Transverse H-Severing
   4. Vectorized Fragment Graph Construction & Durable Endpoint Averaging
-  5. Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search
+  5. Global Direction-Durable Multi-Probe Gap Bridging
   6. Global Min-Cost Linear Assignment Matching with Degree-1 & No-Cycle Constraints (Zero False Merges)
-  7. Connected-Component Bounded Label Diffusion (Zero bleed across empty voxels)
-  8. Short Fiber Filtering (< 5 vx) before Label Diffusion
+  7. Fast Multi-Threaded cKDTree Voronoi Label Diffusion (Disk-Backed open_memmap)
 
 Modes:
   - 'direct' (default): Runs global topology optimization directly across the entire volume with strict degree-1 matching.
@@ -22,14 +21,10 @@ import time
 import argparse
 import gc
 import shutil
-from collections import defaultdict
 import numpy as np
 from scipy.ndimage import gaussian_filter, convolve
 from skimage.morphology import skeletonize
 from scipy.spatial import cKDTree
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import connected_components
-import tifffile
 from tqdm import tqdm
 
 # Ensure package root is in path
@@ -39,137 +34,9 @@ from topology_optimizer.step1_sever_h_junctions import sever_h_junctions
 from topology_optimizer.step2_bridge_gaps import find_bridge_candidates
 from topology_optimizer.step3_build_fragment_graph import build_fragment_graph, FiberFragment
 from topology_optimizer.step4_optimize_topology import optimize_topology
-from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi, prune_short_fibers_and_repropagate
-from topology_optimizer.clean_border_artifacts import crop_and_separate_border_fibers, separate_broken_fibers
+from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi
 from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad, compute_metrics
-from topology_optimizer.visualize_results import save_fiber_length_histogram, export_uint16_tiff
-
-
-def get_default_volume(target_dir='data/fibers_to_segment'):
-    """Finds and returns the first .tif, .tiff, or .npy volume file in the specified directory."""
-    if os.path.isdir(target_dir):
-        valid_exts = ('.tif', '.tiff', '.npy')
-        files = [
-            os.path.join(target_dir, f).replace('\\', '/')
-            for f in sorted(os.listdir(target_dir))
-            if f.lower().endswith(valid_exts)
-            and not f.lower().endswith(('_intensity.npy', '_orientation.npy', '_skel.npy', '_skeleton.npy', '_instance.npy'))
-            and os.path.isfile(os.path.join(target_dir, f))
-        ]
-        if files:
-            return files[0]
-    return 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif'
-
-
-def get_default_intensity(target_dir='outputs', volume_path=None):
-    """Finds default intensity file from outputs folder first, falling back to data/fibers_to_segment."""
-    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
-
-    # 1. Search in outputs folder
-    if os.path.isdir('outputs'):
-        if stem:
-            for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join('outputs', f"{stem}_intensity{ext}").replace('\\', '/')
-                if os.path.exists(p):
-                    return p
-        for name in ['fiber_intensity.npy', 'dual_collagen_64_intensity.npy', 'dual_collagen_intensity.npy', 'dual_collagen_morpho_intensity.npy']:
-            p = os.path.join('outputs', name).replace('\\', '/')
-            if os.path.exists(p):
-                return p
-        for f in sorted(os.listdir('outputs')):
-            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
-                return os.path.join('outputs', f).replace('\\', '/')
-
-    # 2. Search in target_dir / data/fibers_to_segment folder
-    if os.path.isdir(target_dir):
-        if stem:
-            for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join(target_dir, f"{stem}_intensity{ext}").replace('\\', '/')
-                if os.path.exists(p):
-                    return p
-        for name in ['fiber_intensity.npy', 'intensity.npy']:
-            p = os.path.join(target_dir, name).replace('\\', '/')
-            if os.path.exists(p):
-                return p
-        for f in sorted(os.listdir(target_dir)):
-            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
-                return os.path.join(target_dir, f).replace('\\', '/')
-
-    return 'outputs/fiber_intensity.npy'
-
-
-def get_default_orientation(target_dir='outputs', volume_path=None):
-    """Finds default orientation file from outputs folder first, falling back to data/fibers_to_segment."""
-    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
-
-    # 1. Search in outputs folder
-    if os.path.isdir('outputs'):
-        if stem:
-            for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join('outputs', f"{stem}_orientation{ext}").replace('\\', '/')
-                if os.path.exists(p):
-                    return p
-        for name in ['fiber_orientation.npy', 'dual_collagen_64_orientation.npy', 'dual_collagen_orientation.npy', 'dual_collagen_morpho_orientation.npy']:
-            p = os.path.join('outputs', name).replace('\\', '/')
-            if os.path.exists(p):
-                return p
-        for f in sorted(os.listdir('outputs')):
-            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
-                return os.path.join('outputs', f).replace('\\', '/')
-
-    # 2. Search in target_dir / data/fibers_to_segment folder
-    if os.path.isdir(target_dir):
-        if stem:
-            for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join(target_dir, f"{stem}_orientation{ext}").replace('\\', '/')
-                if os.path.exists(p):
-                    return p
-        for name in ['fiber_orientation.npy', 'orientation.npy']:
-            p = os.path.join(target_dir, name).replace('\\', '/')
-            if os.path.exists(p):
-                return p
-        for f in sorted(os.listdir(target_dir)):
-            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
-                return os.path.join(target_dir, f).replace('\\', '/')
-
-    return 'outputs/fiber_orientation.npy'
-
-
-def load_volume_array(path: str, mmap_mode: str = 'r'):
-    """Loads a 3D volume from .npy, .tif, or .tiff format."""
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Volume file not found: {path}")
-    ext = os.path.splitext(path)[1].lower()
-    if ext == '.npy':
-        return np.load(path, mmap_mode=mmap_mode)
-    elif ext in ('.tif', '.tiff'):
-        vol = tifffile.imread(path)
-        if vol.dtype == bool:
-            return vol.astype(np.float32)
-        elif vol.max() > 1.0:
-            return (vol > 127).astype(np.float32)
-        else:
-            return (vol > 0.5).astype(np.float32)
-    else:
-        raise ValueError(f"Unsupported volume file format '{ext}' for '{path}'. Supported formats: .npy, .tif, .tiff")
-
-
-def load_neural_field_array(path: str, mmap_mode: str = 'r'):
-    """Loads a neural field array (intensity or orientation) from .npy, .tif, or .tiff format."""
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Neural field file not found: {path}")
-    ext = os.path.splitext(path)[1].lower()
-    if ext == '.npy':
-        return np.load(path, mmap_mode=mmap_mode)
-    elif ext in ('.tif', '.tiff'):
-        arr = tifffile.imread(path)
-        if arr.dtype == np.uint16:
-            return arr.astype(np.float32) / 65535.0
-        elif arr.dtype == np.uint8:
-            return arr.astype(np.float32) / 255.0
-        return arr.astype(np.float32)
-    else:
-        return np.load(path, mmap_mode=mmap_mode)
+from topology_optimizer.visualize_results import save_diagnostic_slices, save_fiber_length_histogram, save_metrics_text
 
 
 class UnionFind:
@@ -195,7 +62,7 @@ DEFAULT_PARAMS = dict(
     # Skeleton extraction
     core_threshold    = 0.28,
     sigma_prefilter   = 0.60,
-    spur_pruning_steps= 0,
+    spur_pruning_steps= 8,
 
     # Step 1: H-junction severing
     max_rung_length      = 14,
@@ -203,24 +70,19 @@ DEFAULT_PARAMS = dict(
     perp_thresh          = 0.50,
 
     # Step 2: Gap bridging
-    max_gap_distance  = 24.0,
-    mutual_thresh     = 0.50,
-    forward_thresh    = 0.35,
-    durable_thresh    = 0.40,
-    durable_min_frac  = 0.40,
+    max_gap_distance  = 18.0,
+    mutual_thresh     = 0.65,
+    forward_thresh    = 0.55,
+    durable_thresh    = 0.50,
+    durable_min_frac  = 0.50,
     n_gap_samples     = 7,
 
     # Step 3: Fragment graph
-    min_fragment_length = 1,
+    min_fragment_length = 8,
 
-    # Step 5: Diffusion & Post-processing
-    min_chain_length  = 5,
-    min_fiber_length  = 5,
+    # Step 5: Diffusion
+    min_chain_length  = 25,
     fg_threshold      = 0.10,
-
-    # Border cleaning
-    cut_border        = 32,
-    border_mode       = 'crop',
 )
 
 
@@ -244,10 +106,10 @@ def run_direct_topology_optimization(
     print(" DIRECT GLOBAL FIBER TOPOLOGY OPTIMIZER (Memory-Mapped, Degree <= 1)", flush=True)
     print("=" * 85, flush=True)
 
-    # 1. Load memory-mapped input volumes (0 GB resident RAM for large .npy)
-    intensity = load_neural_field_array(intensity_path, mmap_mode='r')
-    orientation = load_neural_field_array(orientation_path, mmap_mode='r')
-    volume = load_volume_array(volume_path, mmap_mode='r')
+    # 1. Load memory-mapped input volumes (0 GB resident RAM)
+    intensity = np.load(intensity_path, mmap_mode='r')
+    orientation = np.load(orientation_path, mmap_mode='r')
+    volume = np.load(volume_path, mmap_mode='r')
 
     D, H, W = intensity.shape
     print(f"  Volume dimensions: {D} x {H} x {W}", flush=True)
@@ -286,20 +148,18 @@ def run_direct_topology_optimization(
     del binary_core
     gc.collect()
 
-    if params.get('spur_pruning_steps', 0) > 0:
-        struct26 = np.ones((3, 3, 3), dtype=np.uint8)
-        print(f"  Pruning spurs ({params['spur_pruning_steps']} iterations)...", flush=True)
-        for _ in range(params['spur_pruning_steps']):
-            skel_u8 = skel.astype(np.uint8)
-            convolve(skel_u8, struct26, output=skel_u8, mode='constant', cval=0)
-            endpoints = skel & (skel_u8 == 2)
-            del skel_u8
-            if not endpoints.any():
-                del endpoints
-                break
-            skel[endpoints] = False
-            del endpoints
-            gc.collect()
+    struct26 = np.ones((3, 3, 3), dtype=np.uint8)
+    print(f"  Pruning spurs ({params['spur_pruning_steps']} iterations)...", flush=True)
+    for _ in range(params['spur_pruning_steps']):
+        skel_u8 = skel.astype(np.uint8)
+        n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
+        endpoints = skel & (n_count == 1)
+        if not endpoints.any():
+            break
+        skel[endpoints] = False
+
+    del skel_u8, n_count
+    gc.collect()
 
     n_skel_vox = int(skel.sum())
     print(f"  Skeleton extracted: {n_skel_vox} voxels in {time.time()-t1:.1f}s", flush=True)
@@ -308,30 +168,11 @@ def run_direct_topology_optimization(
         print("  [Warning] Skeleton is empty. Check threshold parameters.", flush=True)
         return {'N_final_fibers': 0, 'Total_pipeline_runtime_sec': float(time.time() - t_total)}
 
-    # Border margin cut (Option 1): Cuts border margin from full skeleton & volumes before
-    # graph construction to cleanly sever edge boundary merger loops and prevent hairpins.
-    cut_b = params.get('cut_border', 0)
-    if cut_b > 0:
-        mz = my = mx = cut_b
-        out_D = D - 2 * mz
-        out_H = H - 2 * my
-        out_W = W - 2 * mx
-        print(f"\n  Cutting border margin ({cut_b} px) from skeleton & volumes before optimization: ({D}, {H}, {W}) -> ({out_D}, {out_H}, {out_W})", flush=True)
-        skel = skel[mz:D-mz, my:H-my, mx:W-mx]
-        intensity = intensity[mz:D-mz, my:H-my, mx:W-mx]
-        volume = volume[mz:D-mz, my:H-my, mx:W-mx]
-        ori_z = ori_z[mz:D-mz, my:H-my, mx:W-mx]
-        ori_y = ori_y[mz:D-mz, my:H-my, mx:W-mx]
-        ori_x = ori_x[mz:D-mz, my:H-my, mx:W-mx]
-        D, H, W = out_D, out_H, out_W
-        n_skel_vox = int(skel.sum())
-        print(f"  Cropped skeleton: {n_skel_vox} voxels retained in clean inner domain", flush=True)
-
     # -------------------------------------------------------------------------
-    # STAGE 2: Orientation-Guided Transverse H-Severing
+    # STAGE 2: Orientation-Decoupled Transverse H-Severing
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
-    print(" STAGE 2: Orientation-Guided Transverse H-Severing", flush=True)
+    print(" STAGE 2: Orientation-Decoupled Transverse H-Severing", flush=True)
     print("=" * 85, flush=True)
     t2 = time.time()
 
@@ -360,7 +201,6 @@ def run_direct_topology_optimization(
         ori_z=ori_z, ori_y=ori_y, ori_x=ori_x,
         min_fragment_length=params['min_fragment_length'],
         verbose=verbose,
-        return_seg_labels=False,
     )
     del clean_skel
     gc.collect()
@@ -371,10 +211,10 @@ def run_direct_topology_optimization(
         return {'N_final_fibers': 0, 'Total_pipeline_runtime_sec': float(time.time() - t_total)}
 
     # -------------------------------------------------------------------------
-    # STAGE 4: Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search
+    # STAGE 4: Direction-Durable Multi-Probe Gap Bridging
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
-    print(" STAGE 4: Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search", flush=True)
+    print(" STAGE 4: Global Direction-Durable Multi-Probe Gap Bridging", flush=True)
     print("=" * 85, flush=True)
     t4 = time.time()
 
@@ -389,10 +229,10 @@ def run_direct_topology_optimization(
         n_gap_samples=params['n_gap_samples'],
         verbose=verbose,
     )
-    print(f"  Gap candidate search complete in {time.time()-t4:.1f}s -- {len(candidates)} candidate bridges", flush=True)
+    print(f"  Gap bridging complete in {time.time()-t4:.1f}s -- {len(candidates)} candidate bridges", flush=True)
 
     # -------------------------------------------------------------------------
-    # STAGE 5: Global Min-Cost Topology Optimization of post-H-sever fragments
+    # STAGE 5: Global Min-Cost Topology Optimization
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
     print(" STAGE 5: Global Min-Cost Topology Optimization (Degree <= 1)", flush=True)
@@ -418,69 +258,70 @@ def run_direct_topology_optimization(
     inst_vol_path = os.path.join(out_dir, 'instance_volume.npy')
 
     inst_skel = np.lib.format.open_memmap(inst_skel_path, mode='w+', dtype=np.int32, shape=(D, H, W))
-    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 5))
     inst_skel, n_kept_chains = build_labeled_skeleton(
         fragments=fragments,
         chains=chains,
         seg_labels=None,
         volume_shape=(D, H, W),
-        min_chain_length=min_flen,
-        out_skel_mmap=inst_skel,
-        verbose=verbose
+        min_chain_length=params['min_chain_length'],
+        out_skel_mmap=inst_skel
     )
     inst_skel.flush()
 
+    fg_mask = (volume > 0.05) | (intensity >= params['fg_threshold'])
     inst_vol = np.lib.format.open_memmap(inst_vol_path, mode='w+', dtype=np.int32, shape=(D, H, W))
+
     diffuse_labels_voronoi(
         inst_skel=inst_skel,
-        volume=volume,
-        intensity=intensity,
-        fg_threshold=params['fg_threshold'],
+        fg_mask=fg_mask,
         out_vol_mmap=inst_vol,
         chunk_size=1000000,
         verbose=verbose
     )
+    del fg_mask
+    gc.collect()
+
     inst_vol.flush()
-    print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers resolved in final volume", flush=True)
+    print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers in final volume", flush=True)
 
     # -------------------------------------------------------------------------
-    # STAGE 7: Exporting Volumes & Centerlines
+    # STAGE 7: Diagnostics & Visualizations
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
-    print(" STAGE 7: Exporting uint16 TIFF & Centerlines", flush=True)
+    print(" STAGE 7: Generating Diagnostic Previews & Metrics Report", flush=True)
     print("=" * 85, flush=True)
 
-    # Export final outputs as uint16 TIFF
-    inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
-    inst_skel_tif_path = os.path.join(out_dir, 'instance_skeleton.tif')
-    export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
-    export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
+    viz_dir = os.path.join(out_dir, 'slices')
+    save_diagnostic_slices(
+        volume=volume,
+        intensity=intensity,
+        pred_inst=inst_vol,
+        gt_inst=None,
+        out_dir=viz_dir,
+        n_slices=8,
+        axis=0,
+    )
 
-    unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
-    chain_lengths = [int(c) for c in counts]
+    chain_lengths = [c.total_length for c in chains if c.total_length >= params['min_chain_length']]
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
 
     total_runtime = float(time.time() - t_total)
     metrics = {
-        'N_final_fibers': len(chain_lengths),
+        'N_final_fibers': n_kept_chains,
         'Mean_fiber_length_voxels': float(np.mean(chain_lengths)) if chain_lengths else 0,
         'Max_fiber_length_voxels': float(max(chain_lengths)) if chain_lengths else 0,
         'Total_pipeline_runtime_sec': total_runtime,
-        'instance_volume_npy': inst_vol_path,
-        'instance_volume_tif': inst_vol_tif_path,
-        'instance_skeleton_npy': inst_skel_path,
-        'instance_skeleton_tif': inst_skel_tif_path,
     }
+    save_metrics_text(metrics, os.path.join(out_dir, 'metrics.txt'))
 
     print("\n" + "=" * 85, flush=True)
     print(f" TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
-    print(f"  - Final Continuous Fibers Resolved:  {len(chain_lengths)}")
+    print(f"  - Final Continuous Fibers Resolved:  {n_kept_chains}")
     print(f"  - Mean Fiber Length:                 {metrics['Mean_fiber_length_voxels']:.1f} voxels")
     print(f"  - Max Fiber Length:                  {metrics['Max_fiber_length_voxels']:.1f} voxels")
-    print(f"  - Instance Volume Array (npy):       {inst_vol_path}")
-    print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
-    print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
-    print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
+    print(f"  - Instance Volume Array:             {inst_vol_path}")
+    print(f"  - Labeled Skeleton Array:            {inst_skel_path}")
+    print(f"  - Diagnostic Slices:                 {viz_dir}")
     print("=" * 85 + "\n", flush=True)
 
     return metrics
@@ -512,10 +353,10 @@ def run_chunked_topology_optimization(
     print(" CHUNKED FIBER TOPOLOGY OPTIMIZER -- OVERLAP CONSENSUS STITCHING (Memory-Mapped)", flush=True)
     print("=" * 85, flush=True)
 
-    # 1. Load memory-mapped input volumes (0 GB resident RAM for large .npy)
-    intensity = load_neural_field_array(intensity_path, mmap_mode='r')
-    orientation = load_neural_field_array(orientation_path, mmap_mode='r')
-    volume = load_volume_array(volume_path, mmap_mode='r')
+    # 1. Load memory-mapped input volumes (0 GB resident RAM)
+    intensity = np.load(intensity_path, mmap_mode='r')
+    orientation = np.load(orientation_path, mmap_mode='r')
+    volume = np.load(volume_path, mmap_mode='r')
 
     D, H, W = intensity.shape
     print(f"  Volume dimensions: {D} x {H} x {W}", flush=True)
@@ -527,22 +368,6 @@ def run_chunked_topology_optimization(
         ori_is_last = False
     else:
         raise ValueError(f"Unexpected orientation shape: {orientation.shape}")
-
-    # Border margin cut: Slices inputs before chunking to eliminate edge artifacts
-    cut_b = params.get('cut_border', 0)
-    if cut_b > 0:
-        mz = my = mx = cut_b
-        out_D = D - 2 * mz
-        out_H = H - 2 * my
-        out_W = W - 2 * mx
-        print(f"  Cutting border margin ({cut_b} px) from inputs before chunking: ({D}, {H}, {W}) -> ({out_D}, {out_H}, {out_W})", flush=True)
-        intensity = intensity[mz:D-mz, my:H-my, mx:W-mx]
-        volume = volume[mz:D-mz, my:H-my, mx:W-mx]
-        if ori_is_last:
-            orientation = orientation[mz:D-mz, my:H-my, mx:W-mx, :]
-        else:
-            orientation = orientation[:, mz:D-mz, my:H-my, mx:W-mx]
-        D, H, W = out_D, out_H, out_W
 
     # Build overlapping chunk grid
     step_z = max(1, chunk_size - overlap)
@@ -612,14 +437,11 @@ def run_chunked_topology_optimization(
 
         for _ in range(params['spur_pruning_steps']):
             skel_u8 = sub_skel.astype(np.uint8)
-            convolve(skel_u8, struct26, output=skel_u8, mode='constant', cval=0)
-            endpoints = sub_skel & (skel_u8 == 2)
-            del skel_u8
+            n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
+            endpoints = sub_skel & (n_count == 1)
             if not endpoints.any():
-                del endpoints
                 break
             sub_skel[endpoints] = False
-            del endpoints
 
         sub_clean_skel = sever_h_junctions(
             skeleton=sub_skel,
@@ -663,8 +485,7 @@ def run_chunked_topology_optimization(
             chains=sub_chains,
             seg_labels=None,
             volume_shape=sub_int.shape,
-            min_chain_length=params.get('min_fiber_length', params.get('min_chain_length', 5)),
-            verbose=False
+            min_chain_length=params['min_chain_length']
         )
 
         sub_fg = (sub_vol > 0.05) | (sub_int >= params['fg_threshold'])
@@ -840,15 +661,20 @@ def run_chunked_topology_optimization(
 
     shutil.rmtree(tmp_chunk_dir, ignore_errors=True)
 
-
-    # Export final outputs as uint16 TIFF
-    inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
-    inst_skel_tif_path = os.path.join(out_dir, 'instance_skeleton.tif')
-    export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
-    export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
+    # Diagnostics
+    viz_dir = os.path.join(out_dir, 'slices')
+    save_diagnostic_slices(
+        volume=volume,
+        intensity=intensity,
+        pred_inst=inst_vol,
+        gt_inst=None,
+        out_dir=viz_dir,
+        n_slices=8,
+        axis=0,
+    )
 
     unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
-    chain_lengths = [int(c) for c in counts]
+    chain_lengths = [int(c) for c in counts if c >= params['min_chain_length']]
 
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
 
@@ -858,31 +684,17 @@ def run_chunked_topology_optimization(
         'Mean_fiber_length_voxels': float(np.mean(chain_lengths)) if chain_lengths else 0,
         'Max_fiber_length_voxels': float(max(chain_lengths)) if chain_lengths else 0,
         'Total_pipeline_runtime_sec': total_runtime,
-        'instance_volume_npy': inst_vol_path,
-        'instance_volume_tif': inst_vol_tif_path,
-        'instance_skeleton_npy': inst_skel_path,
-        'instance_skeleton_tif': inst_skel_tif_path,
     }
-
-    print("\n" + "=" * 85, flush=True)
-    print(f" CHUNKED TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
-    print(f"  - Final Continuous Fibers Resolved:  {len(chain_lengths)}")
-    print(f"  - Mean Fiber Length:                 {metrics['Mean_fiber_length_voxels']:.1f} voxels")
-    print(f"  - Max Fiber Length:                  {metrics['Max_fiber_length_voxels']:.1f} voxels")
-    print(f"  - Instance Volume Array (npy):       {inst_vol_path}")
-    print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
-    print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
-    print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
-    print("=" * 85 + "\n", flush=True)
+    save_metrics_text(metrics, os.path.join(out_dir, 'metrics.txt'))
 
     return metrics
 
 
 def run_topology_optimization(
-    intensity_path: str = None,
-    orientation_path: str = None,
-    volume_path: str = None,
-    out_dir: str = 'outputs/topology_resolved',
+    intensity_path: str,
+    orientation_path: str,
+    volume_path: str,
+    out_dir: str,
     gad_path: str = None,
     params: dict = None,
     mode: str = 'direct',
@@ -891,15 +703,6 @@ def run_topology_optimization(
     min_overlap_ratio: float = 0.80,
     verbose: bool = True,
 ):
-    if volume_path is None or not os.path.exists(volume_path):
-        volume_path = get_default_volume('data/fibers_to_segment')
-
-    if intensity_path is None or not os.path.exists(intensity_path):
-        intensity_path = get_default_intensity('outputs', volume_path=volume_path)
-
-    if orientation_path is None or not os.path.exists(orientation_path):
-        orientation_path = get_default_orientation('outputs', volume_path=volume_path)
-
     if mode.lower() in ('chunked', 'chunks', 'tile', 'tiled'):
         return run_chunked_topology_optimization(
             intensity_path=intensity_path,
@@ -926,19 +729,11 @@ def run_topology_optimization(
 
 
 if __name__ == '__main__':
-    default_vol = get_default_volume('data/fibers_to_segment')
-    default_int = get_default_intensity('outputs', volume_path=default_vol)
-    default_ori = get_default_orientation('outputs', volume_path=default_vol)
-
     parser = argparse.ArgumentParser(description="Global Fiber Topology Optimization Runner")
-    parser.add_argument('--volume', type=str, default=default_vol,
-                        help=f"Path to raw/binary volume (.tif, .tiff, .npy) (default: {default_vol})")
-    parser.add_argument('--intensity', type=str, default=default_int,
-                        help=f"Path to predicted intensity .npy/.tif (default: {default_int})")
-    parser.add_argument('--orientation', type=str, default=default_ori,
-                        help=f"Path to predicted orientation .npy/.tif (default: {default_ori})")
-    parser.add_argument('--out', type=str, default='outputs/topology_resolved',
-                        help="Output directory (default: outputs/topology_resolved)")
+    parser.add_argument('--intensity', required=True, help="Path to predicted intensity .npy")
+    parser.add_argument('--orientation', required=True, help="Path to predicted orientation .npy")
+    parser.add_argument('--volume', required=True, help="Path to raw/binary volume .npy")
+    parser.add_argument('--out', required=True, help="Output directory")
     parser.add_argument('--mode', type=str, default='direct', choices=['direct', 'chunked'],
                         help="Optimization mode: 'direct' (default, whole-volume degree-1 matching) or 'chunked'")
     parser.add_argument('--chunk-size', type=int, default=512, help="3D cube chunk size for chunked mode (default: 512)")
@@ -946,20 +741,11 @@ if __name__ == '__main__':
     parser.add_argument('--sigma-prefilter', type=float, default=0.60, help="Gaussian smoothing sigma before skeletonization (default: 0.60)")
     parser.add_argument('--core-threshold', type=float, default=0.28, help="Potential field threshold for centerline core extraction (default: 0.28)")
     parser.add_argument('--gad', default=None, help="Optional path to GAD ground truth file")
-    parser.add_argument('--cut-border', type=int, default=32, help="Margin in voxels to cut from boundary to eliminate loop artifacts (default: 32)")
-    parser.add_argument('--border-mode', type=str, default='crop', choices=['crop', 'zero'],
-                        help="Border cut mode: 'crop' (default, trims shape) or 'zero' (preserves shape, zeroes boundary)")
-    parser.add_argument('--min-fiber-length', type=int, default=5,
-                        help="Minimum fiber centerline length in voxels (default: 5). Shorter fibers are filtered before diffusion.")
     args = parser.parse_args()
 
     params = DEFAULT_PARAMS.copy()
     params['sigma_prefilter'] = args.sigma_prefilter
     params['core_threshold'] = args.core_threshold
-    params['cut_border'] = args.cut_border
-    params['border_mode'] = args.border_mode
-    params['min_fiber_length'] = args.min_fiber_length
-    params['min_chain_length'] = args.min_fiber_length
 
     run_topology_optimization(
         intensity_path=args.intensity,
@@ -971,5 +757,5 @@ if __name__ == '__main__':
         mode=args.mode,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
-        # min_overlap_ratio=args.min_overlap_ratio
+        min_overlap_ratio=args.min_overlap_ratio
     )

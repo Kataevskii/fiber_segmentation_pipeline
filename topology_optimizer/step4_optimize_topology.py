@@ -94,7 +94,6 @@ class FiberChain:
 def optimize_topology(
     fragments: list[FiberFragment],
     candidates: list[BridgeCandidate],
-    max_commit_cost: float = 35.0,
     verbose: bool = True,
 ) -> list[FiberChain]:
     """
@@ -102,11 +101,8 @@ def optimize_topology(
 
     Parameters
     ----------
-    fragments       : list[FiberFragment] -- from step 3
-    candidates      : list[BridgeCandidate] -- from step 2, sorted best-first
-    max_commit_cost : float -- bridges with cost exceeding this (e.g. sharp turns, large gaps)
-                      are penalized out and not committed (default: 35.0)
-    verbose         : bool
+    fragments  : list[FiberFragment] -- from step 3
+    candidates : list[BridgeCandidate] -- from step 2, sorted best-first
 
     Returns
     -------
@@ -120,7 +116,7 @@ def optimize_topology(
     frag_id_to_idx = {f.frag_id: i for i, f in enumerate(fragments)}
 
     # ------------------------------------------------------------------ #
-    # Pre-score all candidates using bridge_cost with turn penalties     #
+    # Pre-score all candidates using merged_fiber_cost                    #
     # ------------------------------------------------------------------ #
     scored: list[tuple[float, BridgeCandidate]] = []
     for cand in candidates:
@@ -131,12 +127,12 @@ def optimize_topology(
         fa = fragments[idx_a]
         fb = fragments[idx_b]
 
+        # Determine which endpoint of fa matches coord_a and which of fb matches coord_b.
+        # The optimizer already orients ori_a/ori_b outward, so we just call bridge_cost.
         cost = bc_func(
             cand.ori_a, cand.ori_b,
             cand.gap_distance,
             cand.path_ori_samples,
-            forward_align_a=cand.forward_align_a,
-            forward_align_b=cand.forward_align_b,
         )
         scored.append((cost, cand))
 
@@ -168,9 +164,6 @@ def optimize_topology(
         return 'head' if d_head <= d_tail else 'tail'
 
     for cost, cand in scored:
-        if max_commit_cost is not None and cost > max_commit_cost:
-            continue
-
         idx_a = frag_id_to_idx.get(cand.seg_id_a)
         idx_b = frag_id_to_idx.get(cand.seg_id_b)
         if idx_a is None or idx_b is None:

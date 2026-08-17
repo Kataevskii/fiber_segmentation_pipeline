@@ -2,23 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-def infer_base_channels_from_checkpoint(checkpoint, default=24):
-    """Infer the U-Net width from a saved checkpoint when available."""
-    if isinstance(checkpoint, dict):
-        if isinstance(checkpoint.get('base_channels'), int):
-            return int(checkpoint['base_channels'])
-        state_dict = checkpoint.get('model_state_dict', checkpoint)
-    else:
-        state_dict = checkpoint
-
-    if isinstance(state_dict, dict):
-        for tensor in state_dict.values():
-            if torch.is_tensor(tensor) and tensor.ndim == 5:
-                return int(tensor.shape[0])
-
-    return default
-
 class DoubleConv(nn.Module):
     """(Conv3D -> GroupNorm/BatchNorm -> GELU) * 2"""
     def __init__(self, in_channels, out_channels, num_groups=8):

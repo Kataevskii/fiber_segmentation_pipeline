@@ -7,10 +7,10 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import median_filter
 
 def compute_analytical_orientation_from_gad(
-    gad_path='data/synthetic/raw/AJ_model_1.gad',
-    tif_path='data/synthetic/raw/AJ_model_1.tif',
-    out_vector_path='data/synthetic/precomputed/train/model_1_base_ori.npy',
-    out_intensity_path='data/synthetic/precomputed/train/model_1_base_intensity.tif',
+    gad_path='raw_data/AJ_model_1.gad',
+    tif_path='raw_data/AJ_model_1.tif',
+    out_vector_path='augmented_data/model_1_base_ori.npy',
+    out_intensity_path='augmented_data/model_1_base_intensity.tif',
     sigma=1.0
 ):
     """
@@ -161,17 +161,18 @@ def compute_analytical_orientation_from_gad(
 
 
 def create_robust_augmented_training_data(
-    gad_path='data/synthetic/raw/AJ_model_1.gad',
-    out_tif_path='data/synthetic/precomputed/train/model_1_aug_vol.tif',
-    out_ori_path='data/synthetic/precomputed/train/model_1_aug_ori.npy',
-    out_centerline_path='data/synthetic/precomputed/train/model_1_aug_centerline.tif',
-    max_shift=2.0,
+    gad_path='raw_data/AJ_model_1.gad',
+    out_tif_path='augmented_data/model_1_aug_vol.tif',
+    out_ori_path='augmented_data/model_1_aug_ori.npy',
+    out_centerline_path='augmented_data/model_1_aug_centerline.tif',
+    shift_std=4.0,
+    wobble_amplitude=3.0,
     median_radius=1
 ):
     """
     Generates robust augmented synthetic fiber volume by:
-    1. Applying bounded per-fiber 3D spatial translations (<= 2.0 voxels) guaranteeing >= 4.5 vx clearance.
-    2. Re-rasterizing displaced fibers to create realistic optical fiber boundary overlap.
+    1. Applying per-fiber random 3D spatial translations and smooth sinusoidal bending (wobble).
+    2. Re-rasterizing displaced fibers to create new realistic fiber crossings & intersections.
     3. Applying a 3D Median Filter for optical blurring and boundary overlap.
     """
     t0 = time.time()
@@ -188,7 +189,7 @@ def create_robust_augmented_training_data(
 
     D, H, W = int(domain_length[0]), int(domain_length[1]), int(domain_length[2])
     num_objects = gad['NumberOfObjects']
-    print(f"Applying robust bounded fiber displacement (<= {max_shift:.1f} vx, no wobble) to {num_objects} fiber objects...", flush=True)
+    print(f"Applying robust fiber displacement & jitter to {num_objects} fiber objects...", flush=True)
 
     aug_spine_pts = []
     aug_spine_tangs = []
@@ -210,13 +211,15 @@ def create_robust_augmented_training_data(
             continue
 
         n_pts = len(pts_zyx)
-        # Bounded 3D spatial shift (norm <= max_shift, guarantees >= 4.57 vx clearance between fibers)
-        shift_dir = np.random.normal(0, 1, size=(1, 3))
-        shift_dir /= (np.linalg.norm(shift_dir) + 1e-8)
-        shift_mag = np.random.uniform(0.0, max_shift)
-        shift = shift_dir * shift_mag
+        # Random 3D spatial shift
+        shift = np.random.normal(0, shift_std, size=(1, 3))
+        # Sinusoidal wobble
+        t_vals = np.linspace(0, 2 * np.pi * np.random.uniform(1.0, 2.5), n_pts)
+        wobble_dir = np.random.normal(0, 1, size=(1, 3))
+        wobble_dir /= (np.linalg.norm(wobble_dir) + 1e-8)
+        wobble = np.sin(t_vals)[:, None] * wobble_dir * wobble_amplitude
 
-        pts_displaced = pts_zyx + shift
+        pts_displaced = pts_zyx + shift + wobble
         pts_displaced[:, 0] %= D
         pts_displaced[:, 1] %= H
         pts_displaced[:, 2] %= W

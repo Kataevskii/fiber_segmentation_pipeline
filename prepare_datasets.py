@@ -1,146 +1,103 @@
 import os
-import re
 import shutil
-import argparse
 import numpy as np
 import tifffile
 
 from core.gt_generator import compute_analytical_orientation_from_gad
 
-
-def natural_sort_key(s):
-    """Sort strings containing numbers in human/natural order (e.g. model_2 before model_10)."""
-    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
-
-
-def find_raw_models(raw_dir='data/synthetic/raw'):
-    """
-    Finds all matching pairs of (.tif / .tiff, .gad) in raw_dir.
-    Returns sorted list of model dictionaries.
-    """
-    os.makedirs(raw_dir, exist_ok=True)
-    if not os.path.exists(raw_dir):
-        return []
-
-    files = os.listdir(raw_dir)
-    tif_files = [f for f in files if f.lower().endswith(('.tif', '.tiff'))]
-
-    models = []
-    for tif_file in tif_files:
-        base_name = os.path.splitext(tif_file)[0]
-        gad_file = base_name + '.gad'
-        tif_path = os.path.join(raw_dir, tif_file)
-        gad_path = os.path.join(raw_dir, gad_file)
-
-        if os.path.exists(gad_path):
-            num_match = re.search(r'(\d+)', base_name)
-            idx = int(num_match.group(1)) if num_match else len(models) + 1
-            models.append({
-                'idx': idx,
-                'name': base_name,
-                'tif': tif_path,
-                'gad': gad_path
-            })
-
-    models.sort(key=lambda m: natural_sort_key(m['name']))
-    return models
-
-
-def process_model(model_info, out_dir, overwrite=False):
-    """Processes a single model and saves memory-mapped arrays in out_dir."""
-    idx = model_info['idx']
-    name = model_info['name']
-    gad_path = model_info['gad']
-    tif_path = model_info['tif']
-
-    base_vol_tif = os.path.join(out_dir, f'model_{idx}_base_vol.tif')
-    base_vol_npy = os.path.join(out_dir, f'model_{idx}_base_vol.npy')
-    base_intensity_npy = os.path.join(out_dir, f'model_{idx}_base_intensity.npy')
-    base_ori_npy = os.path.join(out_dir, f'model_{idx}_base_ori.npy')
-
-    if overwrite or not (os.path.exists(base_vol_npy) and os.path.exists(base_intensity_npy) and os.path.exists(base_ori_npy)):
-        print(f"  Computing GT Signed Potential (std=1.0) & Orientation for {name} -> {out_dir}/...", flush=True)
-        if not os.path.exists(base_vol_tif):
-            shutil.copyfile(tif_path, base_vol_tif)
-
-        if not os.path.exists(base_vol_npy):
-            vol = tifffile.imread(tif_path).astype(np.float32)
-            np.save(base_vol_npy, vol)
-
-        compute_analytical_orientation_from_gad(
-            gad_path=gad_path,
-            tif_path=tif_path,
-            out_vector_path=base_ori_npy,
-            out_intensity_path=base_intensity_npy,
-            sigma=1.0
-        )
-    else:
-        print(f"  GT targets for {name} already precomputed in {out_dir}/", flush=True)
-
-
-def prepare_all_datasets(
-    raw_dir: str = 'data/synthetic/raw',
-    train_dir: str = 'data/synthetic/precomputed/train',
-    test_dir: str = 'data/synthetic/precomputed/test',
-    test_split: float = 0.10,
-    overwrite: bool = False
-):
+def prepare_all_datasets(overwrite=False):
     print("=" * 75, flush=True)
     print(" BATCH DATASET PRECOMPUTATION (MEMORY-MAPPED NPY FORMAT) ", flush=True)
-    print(f"  - Raw Synthetic Directory: {raw_dir}/")
-    print(f"  - Training Target:          {train_dir}/")
-    print(f"  - Test Target:              {test_dir}/ (Default split: {test_split * 100:.0f}%)")
+    print("  - Signed Probability Targets with Subtracted Intersection Gaussians")
+    print("  - Training Datasets: Models 1..8 -> augmented_data/")
+    print("  - Test Dataset: Model 9 -> test_data/")
+    print("  - Final Validation Dataset: Model 10 -> val_data/")
     print("=" * 75, flush=True)
 
-    os.makedirs(train_dir, exist_ok=True)
-    os.makedirs(test_dir, exist_ok=True)
-    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs('augmented_data', exist_ok=True)
+    os.makedirs('test_data', exist_ok=True)
+    os.makedirs('val_data', exist_ok=True)
+    os.makedirs('raw_data', exist_ok=True)
 
-    models = find_raw_models(raw_dir)
-    if not models:
-        print(f"Warning: No matching (.tif, .gad) model pairs found in {raw_dir}/.", flush=True)
-        print(f"Please place your raw synthetic files (e.g. AJ_model_*.tif, AJ_model_*.gad) into {raw_dir}/ first.", flush=True)
-        return
+    # Move model 5 from test_data to augmented_data if present
+    for ext in ['_base_vol.npy', '_base_vol.tif', '_base_intensity.npy', '_base_ori.npy', '_base_centerline.npy', '_base_centerline.tif', '_base_intensity.tif']:
+        src_f = os.path.join('test_data', f'model_5{ext}')
+        dst_f = os.path.join('augmented_data', f'model_5{ext}')
+        if os.path.exists(src_f) and not os.path.exists(dst_f):
+            print(f"Migrating {src_f} -> {dst_f}...", flush=True)
+            shutil.move(src_f, dst_f)
 
-    n_total = len(models)
-    n_test = max(1, int(round(n_total * test_split))) if (n_total > 1 and test_split > 0.0) else 0
-    n_train = n_total - n_test
+    # Move model 6 from val_data to augmented_data if present
+    for ext in ['_base_vol.npy', '_base_vol.tif', '_base_intensity.npy', '_base_ori.npy', '_base_centerline.npy', '_base_centerline.tif', '_base_intensity.tif']:
+        src_f = os.path.join('val_data', f'model_6{ext}')
+        dst_f = os.path.join('augmented_data', f'model_6{ext}')
+        if os.path.exists(src_f) and not os.path.exists(dst_f):
+            print(f"Migrating {src_f} -> {dst_f}...", flush=True)
+            shutil.move(src_f, dst_f)
 
-    train_models = models[:n_train]
-    test_models = models[n_train:]
+    # Clean up any non-model-9 files in test_data
+    for f in os.listdir('test_data'):
+        if not f.startswith('model_9_'):
+            p = os.path.join('test_data', f)
+            print(f"Cleaning obsolete test file: {p}", flush=True)
+            os.remove(p)
 
-    print(f"Discovered {n_total} raw synthetic models in {raw_dir}/:")
-    print(f"  -> Train ({len(train_models)} models, {100.0 * len(train_models) / n_total:.0f}%): {[m['name'] for m in train_models]}")
-    print(f"  -> Test  ({len(test_models)} models, {100.0 * len(test_models) / n_total:.0f}%): {[m['name'] for m in test_models]}\n", flush=True)
+    # Clean up any non-model-10 files in val_data
+    for f in os.listdir('val_data'):
+        if not f.startswith('model_10_'):
+            p = os.path.join('val_data', f)
+            print(f"Cleaning obsolete val file: {p}", flush=True)
+            os.remove(p)
 
-    print("--- [1/2] Processing Training Datasets ---", flush=True)
-    for m in train_models:
-        process_model(m, train_dir, overwrite=overwrite)
+    def process_model(idx, out_dir):
+        gad_path = os.path.join('raw_data', f'AJ_model_{idx}.gad')
+        tif_path = os.path.join('raw_data', f'AJ_model_{idx}.tif')
 
-    if test_models:
-        print("\n--- [2/2] Processing Test Datasets ---", flush=True)
-        for m in test_models:
-            process_model(m, test_dir, overwrite=overwrite)
+        if not os.path.exists(gad_path) or not os.path.exists(tif_path):
+            print(f"Warning: Raw dataset files missing for model {idx}: {gad_path} or {tif_path}, skipping...", flush=True)
+            return
+
+        base_vol_tif = os.path.join(out_dir, f'model_{idx}_base_vol.tif')
+        base_vol_npy = os.path.join(out_dir, f'model_{idx}_base_vol.npy')
+        base_intensity_npy = os.path.join(out_dir, f'model_{idx}_base_intensity.npy')
+        base_ori_npy = os.path.join(out_dir, f'model_{idx}_base_ori.npy')
+
+        if overwrite or not (os.path.exists(base_vol_npy) and os.path.exists(base_intensity_npy) and os.path.exists(base_ori_npy)):
+            print(f"  Computing GT Signed Probability Target (std=1.0, Subtracted Intersections) & Orientation for Model {idx} in {out_dir}/...", flush=True)
+            if not os.path.exists(base_vol_tif):
+                shutil.copyfile(tif_path, base_vol_tif)
+            
+            if not os.path.exists(base_vol_npy):
+                vol = tifffile.imread(tif_path).astype(np.float32)
+                np.save(base_vol_npy, vol)
+
+            compute_analytical_orientation_from_gad(
+                gad_path=gad_path,
+                tif_path=tif_path,
+                out_vector_path=base_ori_npy,
+                out_intensity_path=base_intensity_npy,
+                sigma=1.0
+            )
+        else:
+            print(f"  GT targets for Model {idx} already precomputed in {out_dir}/", flush=True)
+
+    # 1. Training Datasets (Models 1..8)
+    print("\n--- Processing Training Datasets (Models 1..8) ---", flush=True)
+    for idx in range(1, 9):
+        process_model(idx, 'augmented_data')
+
+    # 2. Test Dataset (Model 9)
+    print("\n--- Processing Test Dataset (Model 9) ---", flush=True)
+    process_model(9, 'test_data')
+
+    # 3. Final Validation Dataset (Model 10)
+    print("\n--- Processing Final Validation Dataset (Model 10) ---", flush=True)
+    process_model(10, 'val_data')
 
     print("\n" + "=" * 75, flush=True)
     print(" ALL DATASETS PREPARED & MEMORY-MAPPED SUCCESSFULLY! ", flush=True)
     print("=" * 75, flush=True)
 
-
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Precompute Memory-Mapped Continuous Ground-Truth Fields")
-    parser.add_argument('--raw-dir', type=str, default='data/synthetic/raw', help="Directory containing raw synthetic (.tif, .gad) models (default: data/synthetic/raw)")
-    parser.add_argument('--train-dir', type=str, default='data/synthetic/precomputed/train', help="Output directory for training datasets (default: data/synthetic/precomputed/train)")
-    parser.add_argument('--test-dir', type=str, default='data/synthetic/precomputed/test', help="Output directory for test datasets (default: data/synthetic/precomputed/test)")
-    parser.add_argument('--test-split', type=float, default=0.10, help="Fraction of raw models to allocate for test set (default: 0.10 / 10%%)")
-    parser.add_argument('--overwrite', action='store_true', help="Force recomputation even if .npy files already exist")
-    args = parser.parse_args()
-
-    prepare_all_datasets(
-        raw_dir=args.raw_dir,
-        train_dir=args.train_dir,
-        test_dir=args.test_dir,
-        test_split=args.test_split,
-        overwrite=args.overwrite
-    )
+    prepare_all_datasets()
 

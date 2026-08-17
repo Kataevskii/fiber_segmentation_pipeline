@@ -1,60 +1,38 @@
 import os
-import json
 import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 import tifffile
-from scipy.spatial import cKDTree
+from scipy.ndimage import (
+    binary_closing, binary_dilation, binary_erosion, binary_opening,
+    generate_binary_structure, gaussian_filter, distance_transform_edt
+)
 
-def ensure_individual_fibers_extracted(real_data_dir='data/curated', padding=2, auto_extract=False, target_patches=None, verbose=True):
+def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=2, verbose=True):
     """
-    Checks the status of extracted individual single-fiber sub-volume stamps in
-    data/curated/individual_fibers/.
-
-    By default, auto_extract is False to avoid mass-exporting fibers from all patches,
-    allowing users to selectively extract fibers using scripts/extract_individual_fibers.py.
+    Scans real curated training patch blocks (e.g. in real_train_data/curated_patches/)
+    and extracts all individual single-fiber sub-volume stamps into
+    real_train_data/individual_fibers/ if missing or incomplete.
     """
     if not real_data_dir or not os.path.exists(real_data_dir):
         return 0
 
-    if os.path.basename(real_data_dir) == 'patches':
-        curated_dir = real_data_dir
-        indiv_dir = os.path.join(os.path.dirname(real_data_dir), 'individual_fibers')
-    else:
-        curated_dir = os.path.join(real_data_dir, 'patches')
-        indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
-
-    os.makedirs(indiv_dir, exist_ok=True)
-    existing_stamps = [f for f in os.listdir(indiv_dir) if f.endswith('_vol.npy') and '_fiber_' in f]
-    total_stamps = len(existing_stamps)
-
-    if not auto_extract and target_patches is None:
-        if verbose:
-            if total_stamps > 0:
-                print(f"Curated individual fibers inventory: {total_stamps} stamps available in '{indiv_dir}'.", flush=True)
-            else:
-                print(f"Notice: No individual fiber stamps found in '{indiv_dir}'. To extract donor fibers from specific patches, run:\n  python scripts/extract_individual_fibers.py --patch <patch_name>", flush=True)
-        return total_stamps
+    curated_dir = os.path.join(real_data_dir, 'curated_patches')
+    indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
 
     if not os.path.exists(curated_dir):
-        return total_stamps
+        return 0
 
+    os.makedirs(indiv_dir, exist_ok=True)
     patch_vols = sorted([
         os.path.join(curated_dir, f)
         for f in os.listdir(curated_dir)
         if f.endswith('_vol.npy')
     ])
 
-    if target_patches is not None:
-        target_set = {str(p).strip() for p in target_patches}
-        patch_vols = [
-            pv for pv in patch_vols
-            if os.path.basename(pv).replace('_vol.npy', '') in target_set
-            or any(t in os.path.basename(pv) for t in target_set)
-        ]
-
     newly_extracted = 0
+    total_stamps = 0
 
     for p_vol_path in patch_vols:
         p_name = os.path.basename(p_vol_path).replace('_vol.npy', '')
@@ -67,6 +45,7 @@ def ensure_individual_fibers_extracted(real_data_dir='data/curated', padding=2, 
 
         inst = np.load(p_inst_path)
         unique_ids = np.unique(inst[inst > 0])
+        total_stamps += len(unique_ids)
 
         missing_fibers = []
         for fib_id in unique_ids:
@@ -108,250 +87,9 @@ def ensure_individual_fibers_extracted(real_data_dir='data/curated', padding=2, 
             newly_extracted += 1
 
     if newly_extracted > 0 and verbose:
-        print(f"Extracted {newly_extracted} new individual fiber stamps from curated patch blocks into '{indiv_dir}'.", flush=True)
+        print(f"Auto-extracted {newly_extracted} new individual fiber stamps from curated patch blocks into '{indiv_dir}'.", flush=True)
 
-    total_stamps = len([f for f in os.listdir(indiv_dir) if f.endswith('_vol.npy') and '_fiber_' in f])
     return total_stamps
-
-
-def _augment_stamp(stamp_vol, stamp_int, stamp_ori):
-    """Randomly flips and rotates an individual fiber stamp of arbitrary 3D shape."""
-    s_vol = stamp_vol.copy()
-    s_int = stamp_int.copy()
-    s_ori = stamp_ori.copy()
-
-    # Ensure channel-first format for ori: (3, d, h, w)
-    if s_ori.ndim == 4 and s_ori.shape[-1] == 3 and s_ori.shape[0] != 3:
-        s_ori = np.transpose(s_ori, (3, 0, 1, 2)).copy()
-
-    # 1. Random 3D Flips
-    if random.random() > 0.5:
-        s_vol = np.flip(s_vol, axis=0).copy()
-        s_int = np.flip(s_int, axis=0).copy()
-        s_ori = np.flip(s_ori, axis=1).copy()
-        s_ori[0] = -s_ori[0]
-
-    if random.random() > 0.5:
-        s_vol = np.flip(s_vol, axis=1).copy()
-        s_int = np.flip(s_int, axis=1).copy()
-        s_ori = np.flip(s_ori, axis=2).copy()
-        s_ori[1] = -s_ori[1]
-
-    if random.random() > 0.5:
-        s_vol = np.flip(s_vol, axis=2).copy()
-        s_int = np.flip(s_int, axis=2).copy()
-        s_ori = np.flip(s_ori, axis=3).copy()
-        s_ori[2] = -s_ori[2]
-
-    # 2. Random 3D Orthogonal Rotations (using np.stack to accommodate rectangular stamps)
-    k_yx = random.randint(0, 3)
-    if k_yx > 0:
-        s_vol = np.rot90(s_vol, k=k_yx, axes=(1, 2)).copy()
-        s_int = np.rot90(s_int, k=k_yx, axes=(1, 2)).copy()
-        ori_z = np.rot90(s_ori[0], k=k_yx, axes=(1, 2)).copy()
-        ori_y = np.rot90(s_ori[1], k=k_yx, axes=(1, 2)).copy()
-        ori_x = np.rot90(s_ori[2], k=k_yx, axes=(1, 2)).copy()
-        if k_yx == 1:
-            s_ori = np.stack([ori_z, -ori_x, ori_y], axis=0)
-        elif k_yx == 2:
-            s_ori = np.stack([ori_z, -ori_y, -ori_x], axis=0)
-        elif k_yx == 3:
-            s_ori = np.stack([ori_z, ori_x, -ori_y], axis=0)
-
-    k_zx = random.randint(0, 3)
-    if k_zx > 0:
-        s_vol = np.rot90(s_vol, k=k_zx, axes=(0, 2)).copy()
-        s_int = np.rot90(s_int, k=k_zx, axes=(0, 2)).copy()
-        ori_z = np.rot90(s_ori[0], k=k_zx, axes=(0, 2)).copy()
-        ori_y = np.rot90(s_ori[1], k=k_zx, axes=(0, 2)).copy()
-        ori_x = np.rot90(s_ori[2], k=k_zx, axes=(0, 2)).copy()
-        if k_zx == 1:
-            s_ori = np.stack([-ori_x, ori_y, ori_z], axis=0)
-        elif k_zx == 2:
-            s_ori = np.stack([-ori_z, ori_y, -ori_x], axis=0)
-        elif k_zx == 3:
-            s_ori = np.stack([ori_x, ori_y, -ori_z], axis=0)
-
-    k_zy = random.randint(0, 3)
-    if k_zy > 0:
-        s_vol = np.rot90(s_vol, k=k_zy, axes=(0, 1)).copy()
-        s_int = np.rot90(s_int, k=k_zy, axes=(0, 1)).copy()
-        ori_z = np.rot90(s_ori[0], k=k_zy, axes=(0, 1)).copy()
-        ori_y = np.rot90(s_ori[1], k=k_zy, axes=(0, 1)).copy()
-        ori_x = np.rot90(s_ori[2], k=k_zy, axes=(0, 1)).copy()
-        if k_zy == 1:
-            s_ori = np.stack([-ori_y, ori_z, ori_x], axis=0)
-        elif k_zy == 2:
-            s_ori = np.stack([-ori_z, -ori_y, ori_x], axis=0)
-        elif k_zy == 3:
-            s_ori = np.stack([ori_y, -ori_z, ori_x], axis=0)
-
-    return s_vol, s_int, s_ori
-
-
-def stamp_fiber_if_separable(
-    vol_patch: np.ndarray,
-    int_patch: np.ndarray,
-    ori_patch: np.ndarray,
-    stamp_vol: np.ndarray,
-    stamp_int: np.ndarray,
-    stamp_ori: np.ndarray,
-    min_centerline_dist: float = 6.0,
-    max_attempts: int = 15,
-    intersection_dip: float = -0.5
-):
-    """
-    Pastes an individual fiber stamp onto a 3D patch ONLY if its centerline
-    remains separated by >= min_centerline_dist (default 6.0 voxels) from all
-    existing fiber centerlines in the patch.
-
-    This ensures that touching/grazing fiber bodies can intersect naturally
-    with a negative probability valley while strictly preventing centerline
-    merging or artificial X-crossing H-junctions.
-    """
-    D, H, W = vol_patch.shape
-    d, h, w = stamp_vol.shape
-
-    # Crop stamp if larger than destination patch
-    if d > D or h > H or w > W:
-        stamp_vol = stamp_vol[:min(d, D), :min(h, H), :min(w, W)]
-        stamp_int = stamp_int[:min(d, D), :min(h, H), :min(w, W)]
-        stamp_ori = stamp_ori[:, :min(d, D), :min(h, H), :min(w, W)]
-        d, h, w = stamp_vol.shape
-
-    # Extract existing centerlines (voxels with positive potential I > 0.5)
-    exist_cl_idx = np.where(int_patch > 0.5)
-    has_existing = len(exist_cl_idx[0]) > 0
-    exist_tree = cKDTree(np.column_stack(exist_cl_idx).astype(np.float32)) if has_existing else None
-
-    # Extract candidate stamp centerlines
-    stamp_cl_idx = np.where(stamp_int > 0.5)
-    if len(stamp_cl_idx[0]) == 0:
-        return vol_patch, int_patch, ori_patch, False
-
-    stamp_cl_coords = np.column_stack(stamp_cl_idx).astype(np.float32)
-
-    for _ in range(max_attempts):
-        z0 = random.randint(0, max(0, D - d))
-        y0 = random.randint(0, max(0, H - h))
-        x0 = random.randint(0, max(0, W - w))
-        offset = np.array([z0, y0, x0], dtype=np.float32)
-
-        # Centerline 6-voxel separability check
-        if exist_tree is not None:
-            stamp_cl_world = stamp_cl_coords + offset
-            dists, _ = exist_tree.query(stamp_cl_world, k=1)
-            if np.min(dists) < min_centerline_dist:
-                continue  # Rejected: centerlines closer than 6.0 voxels
-
-        # Accepted! Merge into patch
-        z1, y1, x1 = z0 + d, y0 + h, x0 + w
-        sub_vol = vol_patch[z0:z1, y0:y1, x0:x1]
-        sub_int = int_patch[z0:z1, y0:y1, x0:x1]
-        sub_ori = ori_patch[:, z0:z1, y0:y1, x0:x1]
-        # Identify body overlap regions (where outer fiber volumes touch)
-        overlap_mask = (sub_vol > 0) & (stamp_vol > 0)
-
-        # Merge binary volume
-        vol_patch[z0:z1, y0:y1, x0:x1] = (sub_vol > 0) | (stamp_vol > 0)
-
-        # Merge intensity field with continuous Gaussian intersection subtraction (consistent with GT generator)
-        merged_int = np.where(stamp_vol > 0, np.maximum(sub_int, stamp_int), sub_int)
-        if np.any(overlap_mask) and exist_tree is not None:
-            overlap_coords_sub = np.argwhere(overlap_mask)
-            overlap_coords_world = overlap_coords_sub.astype(np.float32) + offset
-
-            stamp_tree = cKDTree(stamp_cl_coords)
-            d1, _ = exist_tree.query(overlap_coords_world, k=1)
-            d2, _ = stamp_tree.query(overlap_coords_sub.astype(np.float32), k=1)
-
-            cross_mask = (d1 <= 3.5) & (d2 <= 3.5)
-            if np.any(cross_mask):
-                g_cross = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * 1.5**2))
-                pts = overlap_coords_sub[cross_mask]
-                merged_int[pts[:, 0], pts[:, 1], pts[:, 2]] -= 1.5 * g_cross
-
-        int_patch[z0:z1, y0:y1, x0:x1] = np.clip(merged_int, -1.0, 1.0)
-
-        # Merge orientation field
-        for c in range(3):
-            ori_patch[c, z0:z1, y0:y1, x0:x1] = np.where(
-                stamp_vol > 0, stamp_ori[c], sub_ori[c]
-            )
-
-        return vol_patch, int_patch, ori_patch, True
-
-    return vol_patch, int_patch, ori_patch, False
-
-
-def collect_dataset_triplets(data_dir):
-    """Collect volume/intensity/orientation triplets from one directory or a list of directories."""
-    dir_list = [data_dir] if isinstance(data_dir, str) else list(data_dir)
-    if isinstance(data_dir, str) and ',' in data_dir:
-        dir_list = [d.strip() for d in data_dir.split(',') if d.strip()]
-
-    volume_paths = []
-    intensity_paths = []
-    orientation_paths = []
-
-    for d in dir_list:
-        if not os.path.exists(d):
-            continue
-
-        files = sorted(os.listdir(d))
-        v_sub = sorted([os.path.join(d, f) for f in files if f.endswith('_vol.npy')])
-        if not v_sub:
-            v_sub = sorted([os.path.join(d, f) for f in files if f.endswith('_vol.tif')])
-
-        for v_path in v_sub:
-            if v_path.endswith('_vol.npy'):
-                i_path = v_path.replace('_vol.npy', '_intensity.npy')
-                if not os.path.exists(i_path):
-                    i_path = v_path.replace('_vol.npy', '_intensity.tif')
-                if not os.path.exists(i_path):
-                    i_path = v_path.replace('_vol.npy', '_centerline.npy')
-                if not os.path.exists(i_path):
-                    i_path = v_path.replace('_vol.npy', '_centerline.tif')
-                o_path = v_path.replace('_vol.npy', '_ori.npy')
-            else:
-                i_path = v_path.replace('_vol.tif', '_intensity.tif')
-                if not os.path.exists(i_path):
-                    i_path = v_path.replace('_vol.tif', '_centerline.tif')
-                o_path = v_path.replace('_vol.tif', '_ori.npy')
-
-            if os.path.exists(v_path) and os.path.exists(i_path) and os.path.exists(o_path):
-                volume_paths.append(v_path)
-                intensity_paths.append(i_path)
-                orientation_paths.append(o_path)
-
-    return volume_paths, intensity_paths, orientation_paths
-
-
-def split_real_validation_triplets(data_dir, holdout_every=5):
-    """Split a real dataset directory into deterministic train and validation triplets."""
-    volume_paths, intensity_paths, orientation_paths = collect_dataset_triplets(data_dir)
-    if not volume_paths:
-        return ([], [], []), ([], [], [])
-
-    train_vols, train_ints, train_oris = [], [], []
-    val_vols, val_ints, val_oris = [], [], []
-
-    for index, (v_path, i_path, o_path) in enumerate(zip(volume_paths, intensity_paths, orientation_paths)):
-        if holdout_every > 0 and index % holdout_every == 0:
-            val_vols.append(v_path)
-            val_ints.append(i_path)
-            val_oris.append(o_path)
-        else:
-            train_vols.append(v_path)
-            train_ints.append(i_path)
-            train_oris.append(o_path)
-
-    if not val_vols and train_vols:
-        val_vols.append(train_vols.pop())
-        val_ints.append(train_ints.pop())
-        val_oris.append(train_oris.pop())
-
-    return (train_vols, train_ints, train_oris), (val_vols, val_ints, val_oris)
 
 
 class Fiber3DPatchDataset(Dataset):
@@ -362,7 +100,7 @@ class Fiber3DPatchDataset(Dataset):
     """
     def __init__(
         self,
-        data_dir='data/synthetic/precomputed/train',
+        data_dir='augmented_data',
         volume_paths=None,
         intensity_paths=None,
         orientation_paths=None,
@@ -370,9 +108,8 @@ class Fiber3DPatchDataset(Dataset):
         samples_per_epoch=1200,
         augment=True,
         fg_prob=0.85,
-        jitter_voxels=2,
-        real_data_dir='data/curated',
-        real_stamp_prob=0.25,
+        real_data_dir='real_train_data',
+        real_stamp_prob=0.50,
         verbose=False
     ):
         super().__init__()
@@ -380,7 +117,6 @@ class Fiber3DPatchDataset(Dataset):
         self.samples_per_epoch = samples_per_epoch
         self.augment = augment
         self.fg_prob = fg_prob
-        self.jitter_voxels = jitter_voxels
         self.real_stamp_prob = real_stamp_prob
         self.verbose = verbose
 
@@ -525,10 +261,10 @@ class Fiber3DPatchDataset(Dataset):
             center_coord = fiber_coords[random.randint(0, len(fiber_coords) - 1)]
             z_c, y_c, x_c = int(center_coord[0]), int(center_coord[1]), int(center_coord[2])
 
-            # Add a small local jitter around the sampled fiber center
-            z_start = z_c - p // 2 + random.randint(-self.jitter_voxels, self.jitter_voxels)
-            y_start = y_c - p // 2 + random.randint(-self.jitter_voxels, self.jitter_voxels)
-            x_start = x_c - p // 2 + random.randint(-self.jitter_voxels, self.jitter_voxels)
+            # Add slight random jitter
+            z_start = z_c - p // 2 + random.randint(-4, 4)
+            y_start = y_c - p // 2 + random.randint(-4, 4)
+            x_start = x_c - p // 2 + random.randint(-4, 4)
         else:
             z_start = random.randint(0, max(0, D - p))
             y_start = random.randint(0, max(0, H - p))
@@ -551,22 +287,9 @@ class Fiber3DPatchDataset(Dataset):
             ori_patch = np.array(ori_mmap[z_start:z_end, y_start:y_end, x_start:x_end], dtype=np.float32)
             ori_patch = np.transpose(ori_patch, (3, 0, 1, 2)).copy()
 
-        # Smart Separable Fiber Stamping: Pastes curated fibers only if centerlines maintain >= 6.0 voxels distance
-        if self.augment and self.real_fibers and random.random() < self.real_stamp_prob:
-            num_stamps = random.randint(1, 2)
-            for _ in range(num_stamps):
-                r_vol, r_int, r_ori = random.choice(self.real_fibers)
-                s_vol, s_int, s_ori = _augment_stamp(r_vol, r_int, r_ori)
-                vol_patch, intensity_patch, ori_patch, _ = stamp_fiber_if_separable(
-                    vol_patch, intensity_patch, ori_patch,
-                    s_vol, s_int, s_ori,
-                    min_centerline_dist=6.0,
-                    max_attempts=15,
-                    intersection_dip=-0.5
-                )
-
-        # Data Augmentations: Random 3D Flips and Orthogonal Rotations only
+        # Data Augmentations: Random 3D Flips, Rotations & Intensity Scaling
         if self.augment:
+            # 1. Flip along Z, Y, X axes
             if random.random() > 0.5:
                 vol_patch = np.flip(vol_patch, axis=0).copy()
                 intensity_patch = np.flip(intensity_patch, axis=0).copy()
@@ -585,6 +308,8 @@ class Fiber3DPatchDataset(Dataset):
                 ori_patch = np.flip(ori_patch, axis=3).copy()
                 ori_patch[2] = -ori_patch[2]
 
+            # 2. Full 3D Orthogonal Rotations across all 3 spatial planes (YX, ZX, ZY)
+            # Plane 1: YX plane (axes 1, 2)
             k_yx = random.randint(0, 3)
             if k_yx > 0:
                 vol_patch = np.rot90(vol_patch, k=k_yx, axes=(1, 2)).copy()
@@ -599,6 +324,7 @@ class Fiber3DPatchDataset(Dataset):
                 elif k_yx == 3:
                     ori_patch[0], ori_patch[1], ori_patch[2] = ori_z, ori_x, -ori_y
 
+            # Plane 2: ZX plane (axes 0, 2)
             k_zx = random.randint(0, 3)
             if k_zx > 0:
                 vol_patch = np.rot90(vol_patch, k=k_zx, axes=(0, 2)).copy()
@@ -613,6 +339,7 @@ class Fiber3DPatchDataset(Dataset):
                 elif k_zx == 3:
                     ori_patch[0], ori_patch[1], ori_patch[2] = ori_x, ori_y, -ori_z
 
+            # Plane 3: ZY plane (axes 0, 1)
             k_zy = random.randint(0, 3)
             if k_zy > 0:
                 vol_patch = np.rot90(vol_patch, k=k_zy, axes=(0, 1)).copy()
@@ -627,6 +354,323 @@ class Fiber3DPatchDataset(Dataset):
                 elif k_zy == 3:
                     ori_patch[0], ori_patch[1], ori_patch[2] = ori_y, -ori_z, ori_x
 
+            # 3. Dense Multi-Fiber Collision & Touching Bundle Overlay (75% probability)
+            if random.random() < 0.75:
+                alt_idx = random.randint(0, len(self.volume_paths) - 1)
+                alt_v_path = self.volume_paths[alt_idx]
+                alt_o_path = self.orientation_paths[alt_idx]
+                alt_i_path = self.intensity_paths[alt_idx]
+                alt_coords = self.fiber_coords_list[alt_idx]
+
+                alt_ori_mmap = np.load(alt_o_path, mmap_mode='r')
+                if alt_ori_mmap.shape[0] == 3:
+                    _, alt_D, alt_H, alt_W = alt_ori_mmap.shape
+                    alt_ch_first = True
+                else:
+                    alt_D, alt_H, alt_W, _ = alt_ori_mmap.shape
+                    alt_ch_first = False
+
+                if alt_D >= p and alt_H >= p and alt_W >= p and len(alt_coords) > 0:
+                    alt_center = alt_coords[random.randint(0, len(alt_coords) - 1)]
+                    shift_z = random.randint(-8, 8)
+                    shift_y = random.randint(-8, 8)
+                    shift_x = random.randint(-8, 8)
+
+                    alt_z = max(0, min(alt_D - p, int(alt_center[0]) - p // 2 + shift_z))
+                    alt_y = max(0, min(alt_H - p, int(alt_center[1]) - p // 2 + shift_y))
+                    alt_x = max(0, min(alt_W - p, int(alt_center[2]) - p // 2 + shift_x))
+
+                    alt_vol = self._load_slice(alt_v_path, alt_z, alt_z + p, alt_y, alt_y + p, alt_x, alt_x + p)
+                    alt_int = self._load_slice(alt_i_path, alt_z, alt_z + p, alt_y, alt_y + p, alt_x, alt_x + p)
+
+                    if alt_ch_first:
+                        alt_ori = np.array(alt_ori_mmap[:, alt_z:alt_z+p, alt_y:alt_y+p, alt_x:alt_x+p], dtype=np.float32).copy()
+                    else:
+                        alt_ori = np.array(alt_ori_mmap[alt_z:alt_z+p, alt_y:alt_y+p, alt_x:alt_x+p], dtype=np.float32)
+                        alt_ori = np.transpose(alt_ori, (3, 0, 1, 2)).copy()
+
+                    if alt_vol.shape == (p, p, p):
+                        # Apply random 3D flip/rotation to colliding fiber
+                        if random.random() > 0.5:
+                            alt_vol = np.flip(alt_vol, axis=0).copy()
+                            alt_int = np.flip(alt_int, axis=0).copy()
+                            alt_ori = np.flip(alt_ori, axis=1).copy()
+                            alt_ori[0] = -alt_ori[0]
+                        if random.random() > 0.5:
+                            alt_vol = np.rot90(alt_vol, k=random.randint(1, 3), axes=(1, 2)).copy()
+                            alt_int = np.rot90(alt_int, k=random.randint(1, 3), axes=(1, 2)).copy()
+                            alt_ori = np.rot90(alt_ori, k=random.randint(1, 3), axes=(2, 3)).copy()
+
+                        # Merge fiber volumes
+                        alt_bin = (alt_vol > 0.5).astype(np.float32)
+                        base_bin = (vol_patch > 0.5).astype(np.float32)
+                        overlap_mask = (base_bin > 0) & (alt_bin > 0)
+
+                        vol_patch = np.maximum(vol_patch, alt_bin)
+
+                        # Update orientation: where alt fiber is stronger, assign alt orientation
+                        use_alt = (alt_int > intensity_patch) | ((base_bin == 0) & (alt_bin > 0))
+                        for c in range(3):
+                            ori_patch[c] = np.where(use_alt, alt_ori[c], ori_patch[c])
+
+                        # At overlapping collision interface, create negative intersection dip
+                        intensity_patch = np.where(overlap_mask, -1.0, np.maximum(intensity_patch, alt_int))
+
+            # 4. 3D Copy-Paste Real Fiber Stamping (if curated real data exists)
+            if len(self.real_fibers) > 0 and random.random() < self.real_stamp_prob:
+                num_stamps = random.randint(1, min(2, len(self.real_fibers)))
+                for _ in range(num_stamps):
+                    r_vol, r_int, r_ori = random.choice(self.real_fibers)
+                    r_vol, r_int, r_ori = r_vol.copy(), r_int.copy(), r_ori.copy()
+                    if r_ori.shape[-1] == 3 and r_ori.ndim == 4:
+                        r_ori = np.transpose(r_ori, (3, 0, 1, 2))
+
+                    # Random 3D spatial flip
+                    if random.random() > 0.5:
+                        r_vol = np.flip(r_vol, axis=0).copy()
+                        r_int = np.flip(r_int, axis=0).copy()
+                        r_ori[0] = -np.flip(r_ori[0], axis=0).copy()
+                        r_ori[1] = np.flip(r_ori[1], axis=0).copy()
+                        r_ori[2] = np.flip(r_ori[2], axis=0).copy()
+                    if random.random() > 0.5:
+                        r_vol = np.flip(r_vol, axis=1).copy()
+                        r_int = np.flip(r_int, axis=1).copy()
+                        r_ori[0] = np.flip(r_ori[0], axis=1).copy()
+                        r_ori[1] = -np.flip(r_ori[1], axis=1).copy()
+                        r_ori[2] = np.flip(r_ori[2], axis=1).copy()
+                    if random.random() > 0.5:
+                        r_vol = np.flip(r_vol, axis=2).copy()
+                        r_int = np.flip(r_int, axis=2).copy()
+                        r_ori[0] = np.flip(r_ori[0], axis=2).copy()
+                        r_ori[1] = np.flip(r_ori[1], axis=2).copy()
+                        r_ori[2] = -np.flip(r_ori[2], axis=2).copy()
+
+                    # Random 90 deg rotation in YX plane
+                    k = random.randint(0, 3)
+                    if k > 0:
+                        r_vol = np.rot90(r_vol, k=k, axes=(1, 2)).copy()
+                        r_int = np.rot90(r_int, k=k, axes=(1, 2)).copy()
+                        oz = np.rot90(r_ori[0], k=k, axes=(1, 2)).copy()
+                        oy = np.rot90(r_ori[1], k=k, axes=(1, 2)).copy()
+                        ox = np.rot90(r_ori[2], k=k, axes=(1, 2)).copy()
+                        if k == 1:
+                            r_ori = np.stack([oz, -ox, oy], axis=0)
+                        elif k == 2:
+                            r_ori = np.stack([oz, -oy, -ox], axis=0)
+                        elif k == 3:
+                            r_ori = np.stack([oz, ox, -oy], axis=0)
+
+                    rd, rh, rw = r_vol.shape
+                    # Crop if larger than patch size p
+                    if rd > p or rh > p or rw > p:
+                        sz_start = random.randint(0, max(0, rd - p)) if rd > p else 0
+                        sy_start = random.randint(0, max(0, rh - p)) if rh > p else 0
+                        sx_start = random.randint(0, max(0, rw - p)) if rw > p else 0
+                        r_vol = r_vol[sz_start:sz_start+min(rd, p), sy_start:sy_start+min(rh, p), sx_start:sx_start+min(rw, p)]
+                        r_int = r_int[sz_start:sz_start+min(rd, p), sy_start:sy_start+min(rh, p), sx_start:sx_start+min(rw, p)]
+                        r_ori = r_ori[:, sz_start:sz_start+min(rd, p), sy_start:sy_start+min(rh, p), sx_start:sx_start+min(rw, p)]
+                        rd, rh, rw = r_vol.shape
+
+                    # Pick random insertion origin inside patch
+                    dz0 = random.randint(0, max(0, p - rd))
+                    dy0 = random.randint(0, max(0, p - rh))
+                    dx0 = random.randint(0, max(0, p - rw))
+
+                    # Overlap / collision detection
+                    fg_target = (r_vol > 0.5)
+                    fg_dest = (vol_patch[dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw] > 0.5)
+                    collision_mask = fg_target & fg_dest
+
+                    # Blend binary volume
+                    vol_patch[dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw] = np.maximum(
+                        vol_patch[dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw], r_vol
+                    )
+
+                    # Blend intensity potential field (with -1.0 dip at crossing collision)
+                    dest_int = intensity_patch[dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw]
+                    blended_int = np.where(fg_target, np.maximum(dest_int, r_int), dest_int)
+                    blended_int[collision_mask] = -1.0
+                    intensity_patch[dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw] = blended_int
+
+                    # Blend orientation vectors where real fiber is foreground
+                    dest_ori = ori_patch[:, dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw]
+                    for c in range(3):
+                        dest_ori[c] = np.where(fg_target, r_ori[c], dest_ori[c])
+                    ori_patch[:, dz0:dz0+rd, dy0:dy0+rh, dx0:dx0+rw] = dest_ori
+
+            # 5. Fiber Diameter & Localized Radius Variation (Spherical Beads, Ellipsoids, and Bulges)
+            if random.random() > 0.3:
+                fg_indices = np.argwhere(vol_patch > 0.5)
+                if len(fg_indices) > 0:
+                    centerline_indices = np.argwhere(intensity_patch > 0.25)
+                    sample_pool = centerline_indices if len(centerline_indices) > 0 else fg_indices
+                    
+                    num_bulges = random.randint(2, 6)
+                    sampled_centers = sample_pool[np.random.choice(len(sample_pool), size=min(num_bulges, len(sample_pool)), replace=False)]
+                    
+                    D_p, H_p, W_p = vol_patch.shape
+                    
+                    for z_c, y_c, x_c in sampled_centers:
+                        var_type = random.choice(['sphere', 'ellipsoid', 'thinning'])
+                        
+                        local_ori = ori_patch[:, z_c, y_c, x_c]
+                        norm_ori = np.linalg.norm(local_ori)
+                        if norm_ori > 1e-6:
+                            local_ori = local_ori / norm_ori
+                        else:
+                            local_ori = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+                            
+                        if var_type == 'sphere':
+                            r_var = random.uniform(2.8, 4.5)
+                            k = int(np.ceil(r_var))
+                            z_min, z_max = max(0, z_c - k), min(D_p, z_c + k + 1)
+                            y_min, y_max = max(0, y_c - k), min(H_p, y_c + k + 1)
+                            x_min, x_max = max(0, x_c - k), min(W_p, x_c + k + 1)
+                            
+                            gz, gy, gx = np.ogrid[z_min-z_c:z_max-z_c, y_min-y_c:y_max-y_c, x_min-x_c:x_max-x_c]
+                            mask_shape = (gz**2 + gy**2 + gx**2) <= (r_var**2)
+                            
+                            sub_vol = vol_patch[z_min:z_max, y_min:y_max, x_min:x_max]
+                            newly_added = mask_shape & (sub_vol <= 0.5)
+                            vol_patch[z_min:z_max, y_min:y_max, x_min:x_max] = np.maximum(sub_vol, mask_shape.astype(np.float32))
+                            
+                            for c in range(3):
+                                ori_sub = ori_patch[c, z_min:z_max, y_min:y_max, x_min:x_max]
+                                ori_patch[c, z_min:z_max, y_min:y_max, x_min:x_max] = np.where(newly_added, local_ori[c], ori_sub)
+                                
+                        elif var_type == 'ellipsoid':
+                            rz = random.uniform(2.2, 5.0)
+                            ry = random.uniform(2.2, 5.0)
+                            rx = random.uniform(2.2, 5.0)
+                            
+                            dom_axis = int(np.argmax(np.abs(local_ori)))
+                            if dom_axis == 0: rz = random.uniform(3.5, 6.0)
+                            elif dom_axis == 1: ry = random.uniform(3.5, 6.0)
+                            else: rx = random.uniform(3.5, 6.0)
+                            
+                            kz, ky, kx = int(np.ceil(rz)), int(np.ceil(ry)), int(np.ceil(rx))
+                            z_min, z_max = max(0, z_c - kz), min(D_p, z_c + kz + 1)
+                            y_min, y_max = max(0, y_c - ky), min(H_p, y_c + ky + 1)
+                            x_min, x_max = max(0, x_c - kx), min(W_p, x_c + kx + 1)
+                            
+                            gz, gy, gx = np.ogrid[z_min-z_c:z_max-z_c, y_min-y_c:y_max-y_c, x_min-x_c:x_max-x_c]
+                            mask_shape = ((gz / rz)**2 + (gy / ry)**2 + (gx / rx)**2) <= 1.0
+                            
+                            sub_vol = vol_patch[z_min:z_max, y_min:y_max, x_min:x_max]
+                            newly_added = mask_shape & (sub_vol <= 0.5)
+                            vol_patch[z_min:z_max, y_min:y_max, x_min:x_max] = np.maximum(sub_vol, mask_shape.astype(np.float32))
+                            
+                            for c in range(3):
+                                ori_sub = ori_patch[c, z_min:z_max, y_min:y_max, x_min:x_max]
+                                ori_patch[c, z_min:z_max, y_min:y_max, x_min:x_max] = np.where(newly_added, local_ori[c], ori_sub)
+                                
+                        elif var_type == 'thinning':
+                            r_thin = random.uniform(1.8, 3.0)
+                            k = int(np.ceil(r_thin))
+                            offset_dir = np.random.normal(0, 1, 3)
+                            offset_dir -= np.dot(offset_dir, local_ori) * local_ori
+                            norm_off = np.linalg.norm(offset_dir)
+                            if norm_off > 1e-6:
+                                offset_dir = offset_dir / norm_off * random.uniform(1.8, 2.5)
+                                z_off = int(np.clip(round(z_c + offset_dir[0]), 0, D_p - 1))
+                                y_off = int(np.clip(round(y_c + offset_dir[1]), 0, H_p - 1))
+                                x_off = int(np.clip(round(x_c + offset_dir[2]), 0, W_p - 1))
+                                
+                                z_min, z_max = max(0, z_off - k), min(D_p, z_off + k + 1)
+                                y_min, y_max = max(0, y_off - k), min(H_p, y_off + k + 1)
+                                x_min, x_max = max(0, x_off - k), min(W_p, x_off + k + 1)
+                                
+                                gz, gy, gx = np.ogrid[z_min-z_off:z_max-z_off, y_min-y_off:y_max-y_off, x_min-x_off:x_max-x_off]
+                                mask_bite = (gz**2 + gy**2 + gx**2) <= (r_thin**2)
+                                
+                                sub_intensity = intensity_patch[z_min:z_max, y_min:y_max, x_min:x_max]
+                                can_remove = mask_bite & (sub_intensity < 0.4)
+                                vol_patch[z_min:z_max, y_min:y_max, x_min:x_max][can_remove] = 0.0
+
+            # 5. 3D Morphological Filters for Inter-Fiber Visual Blending & Sintering (CT Simulation)
+            # In real CT images, fibers that are near or touching merge across small gaps due to PSF / partial-volume effects.
+            if random.random() > 0.30:
+                bin_vol = (vol_patch > 0.5)
+                if np.any(bin_vol):
+                    # 5a. Inter-Fiber Morphological Closing & Partial-Volume Saddle Bridging
+                    conn = random.choice([1, 2, 3]) # 6, 18, 26 connectivity
+                    struct = generate_binary_structure(3, conn)
+                    iters = random.choice([1, 2])
+                    closed = binary_closing(bin_vol, structure=struct, iterations=iters)
+                    new_bridges = closed & ~bin_vol
+                    
+                    if np.any(new_bridges):
+                        # Keep a random fraction of bridging voxels for organic irregular fusion
+                        keep_fraction = random.uniform(0.5, 0.95)
+                        bridge_mask = new_bridges & (np.random.random(size=vol_patch.shape) < keep_fraction)
+                        
+                        if np.any(bridge_mask):
+                            # Distance transform to assign nearest fiber orientation to the bridge voxels
+                            _, (ind_z, ind_y, ind_x) = distance_transform_edt(~bin_vol, return_indices=True)
+                            
+                            bin_vol = bin_vol | bridge_mask
+                            vol_patch = bin_vol.astype(np.float32)
+                            
+                            for c in range(3):
+                                ori_patch[c] = np.where(bridge_mask, ori_patch[c, ind_z, ind_y, ind_x], ori_patch[c])
+                                
+                            # Bridges are NOT centerlines -> mark intensity as non-centerline (<= 0.0)
+                            intensity_patch = np.where(bridge_mask, np.minimum(intensity_patch, 0.0), intensity_patch)
+
+            # 5b. Anisotropic Morphological Dilation / Erosion (Eccentricity & Flattening)
+            if random.random() > 0.45:
+                bin_vol = (vol_patch > 0.5)
+                if np.any(bin_vol):
+                    struct_aniso = np.zeros((3, 3, 3), dtype=bool)
+                    struct_aniso[1, 1, 1] = True
+                    num_nbrs = random.randint(2, 5)
+                    coords = np.argwhere(generate_binary_structure(3, 1))
+                    chosen = coords[np.random.choice(len(coords), size=num_nbrs, replace=False)]
+                    for z_c, y_c, x_c in chosen:
+                        struct_aniso[z_c, y_c, x_c] = True
+                        
+                    if random.random() > 0.4:
+                        dilated = binary_dilation(bin_vol, structure=struct_aniso, iterations=1)
+                        new_vox = dilated & ~bin_vol
+                        if np.any(new_vox):
+                            _, (ind_z, ind_y, ind_x) = distance_transform_edt(~bin_vol, return_indices=True)
+                            bin_vol = dilated
+                            vol_patch = bin_vol.astype(np.float32)
+                            for c in range(3):
+                                ori_patch[c] = np.where(new_vox, ori_patch[c, ind_z, ind_y, ind_x], ori_patch[c])
+                    else:
+                        eroded = binary_erosion(bin_vol, structure=struct_aniso, iterations=1)
+                        core_protected = (intensity_patch > 0.35)
+                        bin_vol = eroded | core_protected
+                        vol_patch = bin_vol.astype(np.float32)
+
+            # 5c. CT Point-Spread-Function (PSF) Gaussian Convolution + Soft Thresholding
+            if random.random() > 0.45:
+                sigma_psf = random.uniform(0.5, 1.1)
+                blurred_vol = gaussian_filter(vol_patch, sigma=sigma_psf)
+                noise = np.random.normal(0, 0.03, size=vol_patch.shape).astype(np.float32)
+                noisy_blurred = np.clip(blurred_vol + noise, 0.0, 1.0)
+                thresh = random.uniform(0.35, 0.65)
+                vol_patch = (noisy_blurred >= thresh).astype(np.float32)
+
+            # 6. Binary Fiber Border Roughness & Surface Scalloping (Flipping 0/1 on Fiber Boundaries)
+            if random.random() > 0.40:
+                bin_vol = (vol_patch > 0.5)
+                struct_scallop = generate_binary_structure(3, 1)
+                dilated = binary_dilation(bin_vol, structure=struct_scallop)
+                eroded = binary_erosion(bin_vol, structure=struct_scallop)
+                boundary_mask = dilated & ~eroded
+                flip_mask = boundary_mask & (np.random.random(size=vol_patch.shape) < 0.12)
+                bin_vol[flip_mask] = ~bin_vol[flip_mask]
+                vol_patch = bin_vol.astype(np.float32)
+
+            # 7. Binary Salt-and-Pepper Microscopy Noise
+            if random.random() > 0.50:
+                sp_mask = (np.random.random(size=vol_patch.shape) < 0.005)
+                bin_vol = (vol_patch > 0.5)
+                bin_vol[sp_mask] = ~bin_vol[sp_mask]
+                vol_patch = bin_vol.astype(np.float32)
+
         # Convert to PyTorch Tensors (strictly binary 0.0/1.0 volume)
         vol_patch = (vol_patch > 0.5).astype(np.float32)
         vol_tensor = torch.from_numpy(vol_patch).unsqueeze(0)
@@ -634,263 +678,3 @@ class Fiber3DPatchDataset(Dataset):
         ori_tensor = torch.from_numpy(ori_patch)
 
         return vol_tensor, intensity_tensor, ori_tensor
-
-
-class GADSplineBank:
-    """Fast in-memory cache of synthetic GAD spline centerlines for dynamic patch cropping."""
-    def __init__(self, raw_dir='data/synthetic/raw'):
-        self.models = []
-        if not os.path.exists(raw_dir):
-            return
-
-        files = sorted([f for f in os.listdir(raw_dir) if f.startswith('AJ_model_') and f.endswith('.gad')])
-        for f in files:
-            m_path = os.path.join(raw_dir, f)
-            try:
-                with open(m_path, 'r', encoding='utf-8') as fp:
-                    gad = json.load(fp)
-                voxel_len = gad['Domain']['VoxelLength'][0]
-                curves = []
-                num_objs = gad.get('NumberOfObjects', 0)
-                for o_idx in range(1, num_objs + 1):
-                    obj = gad.get(f'Object{o_idx}', {})
-                    p_keys = sorted([k for k in obj.keys() if k.startswith('Point')], key=lambda x: int(x[5:]))
-                    pts_list = []
-                    for pk in p_keys:
-                        p_val = obj[pk]
-                        if isinstance(p_val, dict) and 'Coord' in p_val:
-                            pts_list.append(p_val['Coord'][0])
-                        elif isinstance(p_val, (list, tuple)):
-                            pts_list.append(p_val[0])
-                        elif isinstance(p_val, dict):
-                            pts_list.append(list(p_val.values())[0])
-                    pts = np.array(pts_list, dtype=np.float32)
-                    if len(pts) >= 2:
-                        pts_zyx = (pts / voxel_len)[:, [2, 1, 0]]
-                        # Dense interpolation along spline
-                        n_pts = len(pts_zyx)
-                        t_d = np.linspace(0, 1, n_pts * 6)
-                        t_s = np.linspace(0, 1, n_pts)
-                        dz = np.interp(t_d, t_s, pts_zyx[:, 0])
-                        dy = np.interp(t_d, t_s, pts_zyx[:, 1])
-                        dx = np.interp(t_d, t_s, pts_zyx[:, 2])
-                        curves.append(np.column_stack([dz, dy, dx]).astype(np.float32))
-                if curves:
-                    self.models.append(curves)
-            except Exception as e:
-                print(f"Warning: Failed to load GAD spline file '{m_path}': {e}", flush=True)
-
-    def sample_crop_curves(self, patch_size=64, min_fibers=2):
-        if not self.models:
-            return []
-        model = random.choice(self.models)
-        for _ in range(30):
-            orig = np.random.uniform(15, 500 - patch_size - 15, size=3)
-            box_min = orig
-            box_max = orig + patch_size
-
-            crop_curves = []
-            for c in model:
-                inside = (c[:, 0] >= box_min[0]) & (c[:, 0] < box_max[0]) & \
-                         (c[:, 1] >= box_min[1]) & (c[:, 1] < box_max[1]) & \
-                         (c[:, 2] >= box_min[2]) & (c[:, 2] < box_max[2])
-                if np.sum(inside) >= 6:
-                    sub_c = c[inside] - box_min
-                    crop_curves.append(sub_c.astype(np.float32))
-            if len(crop_curves) >= min_fibers:
-                return crop_curves
-        return crop_curves
-
-
-class OnTheFlyMorphedDataset(Dataset):
-    """
-    High-Throughput Morphed Biological Fiber Dataset with Full-Volume Sampling.
-
-    Architecture:
-    1. Maintains an active pool of 96x96x96 parent volumes (both synthetic-morphed and real-curated).
-    2. Samples 64x64x64 sub-crops uniformly across the ENTIRE 3D volume of any parent in the pool:
-       (z0, y0, x0) in [0, 32]^3 with random 3D flips and orthogonal rotations.
-    3. Continuously evolves the pool with fresh biological blocks for infinite dataset variety.
-    4. Delivers ultra-high throughput (>500 patches/sec) with zero GPU dataloader starvation.
-    """
-    def __init__(
-        self,
-        raw_dir='data/synthetic/raw',
-        real_data_dir='data/curated/patches',
-        patch_size=64,
-        parent_block_size=96,
-        pool_size=10,
-        samples_per_epoch=800,
-        augment=True,
-        jitter_std=2.5,
-        wobble_amplitude=1.2,
-        real_patch_prob=0.30,
-        cache_library_path='data/curated/fiber_library.pkl'
-    ):
-        super().__init__()
-        self.patch_size = patch_size
-        self.parent_block_size = max(patch_size, parent_block_size)
-        self.pool_size = max(1, pool_size)
-        self.samples_per_epoch = samples_per_epoch
-        self.augment = augment
-        self.jitter_std = jitter_std
-        self.wobble_amplitude = wobble_amplitude
-        self.real_patch_prob = real_patch_prob
-
-        # Import fiber morpher components
-        from core.fiber_morpher import RealFiberLibrary, render_morphed_synthetic_patch
-        self.render_fn = render_morphed_synthetic_patch
-        self.library = RealFiberLibrary(curated_dir=real_data_dir, cache_path=cache_library_path)
-        self.spline_bank = GADSplineBank(raw_dir=raw_dir)
-
-        # Discover and preload unique real curated 96^3 patches (deduplicate .tif and .npy)
-        self.real_pool = []
-        if real_data_dir and os.path.exists(real_data_dir):
-            bases = sorted(list(set(
-                f.replace('_vol.tif', '').replace('_vol.npy', '')
-                for f in os.listdir(real_data_dir)
-                if f.endswith('_vol.tif') or f.endswith('_vol.npy')
-            )))
-            for base in bases:
-                v_p_tif = os.path.join(real_data_dir, f"{base}_vol.tif")
-                v_p_npy = os.path.join(real_data_dir, f"{base}_vol.npy")
-                v_p = v_p_tif if os.path.exists(v_p_tif) else v_p_npy
-                i_p = os.path.join(real_data_dir, f"{base}_intensity.npy")
-                o_p = os.path.join(real_data_dir, f"{base}_ori.npy")
-                if os.path.exists(v_p) and os.path.exists(i_p) and os.path.exists(o_p):
-                    v = tifffile.imread(v_p) if v_p.endswith('.tif') else np.load(v_p)
-                    v = (v > 0).astype(bool)
-                    int_t = np.load(i_p).astype(np.float32)
-                    ori_t = np.load(o_p).astype(np.float32)
-                    if ori_t.ndim == 3:
-                        ori_t = ori_t[None, ...]
-                    self.real_pool.append((v, int_t, ori_t))
-
-        # Initialize active morphed synthetic pool
-        self.synthetic_pool = []
-        print(f"Pre-rendering initial pool of {self.pool_size} diverse 96^3 morphed biological blocks...", flush=True)
-        for i in range(self.pool_size):
-            self.synthetic_pool.append(self._generate_parent_block())
-
-        print(f"Initialized OnTheFlyMorphedDataset: Pool of {len(self.synthetic_pool)} morphed blocks + "
-              f"{len(self.real_pool)} unique real curated blocks. Sampling uniformly across all 3D coordinates.", flush=True)
-
-    def __len__(self):
-        return self.samples_per_epoch
-
-    def _augment_curves(self, curves, S=96):
-        aug = []
-        flip_z = (random.random() > 0.5)
-        flip_y = (random.random() > 0.5)
-        flip_x = (random.random() > 0.5)
-        rot_k = random.randint(0, 3)
-        shift = np.random.normal(0, self.jitter_std, size=(1, 3)).astype(np.float32)
-
-        for c in curves:
-            c_aug = c.copy() + shift
-
-            # 3D Flips
-            if flip_z: c_aug[:, 0] = (S - 1) - c_aug[:, 0]
-            if flip_y: c_aug[:, 1] = (S - 1) - c_aug[:, 1]
-            if flip_x: c_aug[:, 2] = (S - 1) - c_aug[:, 2]
-
-            # 3D Orthogonal Rotations
-            if rot_k > 0:
-                for _ in range(rot_k):
-                    y_old, x_old = c_aug[:, 1].copy(), c_aug[:, 2].copy()
-                    c_aug[:, 1] = x_old
-                    c_aug[:, 2] = (S - 1) - y_old
-
-            # Biological micro-crimp / sinusoidal wobble
-            n_pts = len(c_aug)
-            if n_pts > 4 and self.wobble_amplitude > 0:
-                t = np.linspace(0, 2 * np.pi, n_pts)
-                wobble_dir = np.random.normal(0, 1, size=(1, 3))
-                wobble_dir /= (np.linalg.norm(wobble_dir) + 1e-8)
-                c_aug += np.sin(t)[:, None] * wobble_dir * random.uniform(0.5, self.wobble_amplitude)
-
-            aug.append(c_aug.astype(np.float32))
-        return aug
-
-    def _generate_parent_block(self):
-        """Generates a fresh 96x96x96 morphed biological parent block."""
-        P = self.parent_block_size
-        curves = self.spline_bank.sample_crop_curves(patch_size=P, min_fibers=3)
-        if not curves:
-            vol = np.zeros((P, P, P), dtype=bool)
-            int_t = np.zeros((P, P, P), dtype=np.float32)
-            ori_t = np.zeros((3, P, P, P), dtype=np.float32)
-            return vol, int_t, ori_t
-
-        if self.augment:
-            curves = self._augment_curves(curves, S=P)
-
-        vol_p, int_p, ori_p = self.render_fn(curves, self.library, patch_size=P)
-        return vol_p, int_p, ori_p
-
-    def refresh_epoch_pool(self, n_blocks=None):
-        """Morphs a fresh batch of 96^3 biological blocks for the new epoch."""
-        n = n_blocks or self.pool_size
-        self.synthetic_pool = [self._generate_parent_block() for _ in range(n)]
-
-    def refresh_pool_block(self):
-        """Evolves the pool by replacing a random block with a newly rendered morphed volume."""
-        self.refresh_epoch_pool()
-
-    def __getitem__(self, idx):
-        # 1. Select block from real pool or synthetic morphed pool
-        if self.real_pool and random.random() < self.real_patch_prob:
-            p_vol, p_int, p_ori = random.choice(self.real_pool)
-        else:
-            p_vol, p_int, p_ori = random.choice(self.synthetic_pool)
-
-        P_z, P_y, P_x = p_vol.shape
-        S = self.patch_size
-
-        # 2. Sample uniformly across the WHOLE 3D volume
-        z0 = random.randint(0, max(0, P_z - S))
-        y0 = random.randint(0, max(0, P_y - S))
-        x0 = random.randint(0, max(0, P_x - S))
-
-        vol_patch = p_vol[z0:z0+S, y0:y0+S, x0:x0+S].copy()
-        int_patch = p_int[z0:z0+S, y0:y0+S, x0:x0+S].copy()
-        ori_patch = p_ori[:, z0:z0+S, y0:y0+S, x0:x0+S].copy()
-
-        # 3. Apply full 3D spatial transformations (flips & orthogonal rotations)
-        if self.augment:
-            if random.random() > 0.5:
-                vol_patch = np.flip(vol_patch, axis=0).copy()
-                int_patch = np.flip(int_patch, axis=0).copy()
-                ori_patch = np.flip(ori_patch, axis=1).copy()
-                ori_patch[0] = -ori_patch[0]
-            if random.random() > 0.5:
-                vol_patch = np.flip(vol_patch, axis=1).copy()
-                int_patch = np.flip(int_patch, axis=1).copy()
-                ori_patch = np.flip(ori_patch, axis=2).copy()
-                ori_patch[1] = -ori_patch[1]
-            if random.random() > 0.5:
-                vol_patch = np.flip(vol_patch, axis=2).copy()
-                int_patch = np.flip(int_patch, axis=2).copy()
-                ori_patch = np.flip(ori_patch, axis=3).copy()
-                ori_patch[2] = -ori_patch[2]
-
-            k_rot = random.randint(0, 3)
-            if k_rot > 0:
-                vol_patch = np.rot90(vol_patch, k=k_rot, axes=(1, 2)).copy()
-                int_patch = np.rot90(int_patch, k=k_rot, axes=(1, 2)).copy()
-                oz = np.rot90(ori_patch[0], k=k_rot, axes=(1, 2)).copy()
-                oy = np.rot90(ori_patch[1], k=k_rot, axes=(1, 2)).copy()
-                ox = np.rot90(ori_patch[2], k=k_rot, axes=(1, 2)).copy()
-                if k_rot == 1:
-                    ori_patch[0], ori_patch[1], ori_patch[2] = oz, -ox, oy
-                elif k_rot == 2:
-                    ori_patch[0], ori_patch[1], ori_patch[2] = oz, -oy, -ox
-                elif k_rot == 3:
-                    ori_patch[0], ori_patch[1], ori_patch[2] = oz, ox, -oy
-
-        vol_tensor = torch.from_numpy(vol_patch.astype(np.float32)).unsqueeze(0)
-        int_tensor = torch.from_numpy(int_patch).unsqueeze(0)
-        ori_tensor = torch.from_numpy(ori_patch)
-
-        return vol_tensor, int_tensor, ori_tensor
-
