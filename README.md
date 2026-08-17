@@ -58,7 +58,7 @@ Rather than predicting fragile 1-voxel binary masks that coalesce touching fiber
     ▼                                                                     ▼
 1. 3D Medial Axis Thinning & Spur Pruning             2. Transverse H-Severing (perp > 0.50)
     ▼                                                                     ▼
-3. Fragment Graph & Durable Endpoints                 4. Multi-Probe Directional Bridging
+3. Fragment Graph & Durable Endpoints                 4. Post-H-Sever Bridge Candidate Search
     ▼                                                                     ▼
 5. Min-Cost Global Matching (Degree=1)                6. Multi-Label Voronoi Diffusion
                                        │
@@ -97,7 +97,7 @@ When two thick 3D cylinders cross, their shared contact region is a diamond-shap
 2. **Durable Endpoint Averaging**:
    Instead of using the last 1–2 distorted skeleton voxels (which bend toward the cut junction), we average $\vec{O}(\vec{x})$ over the **nearest 5 voxels back into the fragment body**.
 3. **Collinear Continuation**:
-   The KD-Tree pairs matching collinear stems ($|\vec{O}_A \cdot \vec{O}_B| \ge 0.65$) across the 1–2 voxel intersection gap and stitches them straight through.
+    After H-severing, the fragment endpoints are re-averaged from the cleaned skeleton. The KD-Tree then pairs matching collinear stems ($|\vec{O}_A \cdot \vec{O}_B| \ge 0.65$) across the 1–2 voxel intersection gap and stitches them straight through.
 
 ---
 

@@ -57,7 +57,7 @@ def build_fragment_graph(
     ori_z: np.ndarray,
     ori_y: np.ndarray,
     ori_x: np.ndarray,
-    min_fragment_length: int = 8,
+    min_fragment_length: int = 1,
     endpoint_avg_k: int = 5,
     verbose: bool = True,
 ) -> tuple[list[FiberFragment], np.ndarray]:
@@ -68,7 +68,8 @@ def build_fragment_graph(
     ----------
     skeleton            : (D, H, W) bool -- clean skeleton (post H-severing)
     ori_z/y/x           : (D, H, W) float -- unit orientation field
-    min_fragment_length : int -- discard fragments shorter than this
+    min_fragment_length : int -- keep fragments at or above this length; use 1
+                           to retain all post-H-sever fragments for bridging
     endpoint_avg_k      : int -- number of nearest voxels to average for endpoint
                           orientation (makes it "durable", not just last pixel)
 
@@ -107,7 +108,8 @@ def build_fragment_graph(
     valid_ids = np.where(seg_sizes >= min_fragment_length)[0]
     valid_ids = valid_ids[valid_ids > 0]
 
-    # Only keep voxels belonging to valid (long enough) segments
+    # Only keep voxels belonging to valid segments. Set min_fragment_length=1
+    # to preserve all post-H-sever fragments for later reconnection.
     keep_mask = np.isin(vox_ids, valid_ids)
     vox_z  = vox_z[keep_mask]
     vox_y  = vox_y[keep_mask]

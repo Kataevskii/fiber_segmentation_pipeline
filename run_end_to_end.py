@@ -6,7 +6,7 @@ Master 1-Click End-to-End Pipeline:
   2. 3D Medial Axis Extraction & Spur Pruning
   3. Orientation-Decoupled Transverse H-Severing
   4. Fragment Graph Construction with Robust Durable Endpoint Averaging
-  5. Direction-Durable Multi-Probe Gap Bridging
+  5. Post-H-Sever Direction-Durable Bridge Candidate Search
   6. Global Minimum-Cost Topology Optimization
   7. Multi-Label Voronoi Instance Diffusion
 

@@ -5,9 +5,9 @@ Executes the Global Fiber Topology Optimization Pipeline directly on the full vo
   1. Memory-Mapped Input Volume Loading (0 GB resident RAM for 25 GB orientation field)
   2. 3D Potential Field Thinning & Spur Pruning
   3. Orientation-Decoupled Transverse H-Severing
-  4. Vectorized Fragment Graph Construction & Durable Endpoint Averaging
-  5. Global Direction-Durable Multi-Probe Gap Bridging
-  6. Global Min-Cost Linear Assignment Matching with Degree-1 & No-Cycle Constraints (Zero False Merges)
+    4. Vectorized Fragment Graph Construction & Durable Endpoint Averaging
+    5. Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search
+    6. Global Min-Cost Linear Assignment Matching with Degree-1 & No-Cycle Constraints (Zero False Merges)
   7. Fast Multi-Threaded cKDTree Voronoi Label Diffusion (Disk-Backed open_memmap)
 
 Modes:
@@ -78,7 +78,7 @@ DEFAULT_PARAMS = dict(
     n_gap_samples     = 7,
 
     # Step 3: Fragment graph
-    min_fragment_length = 8,
+    min_fragment_length = 1,
 
     # Step 5: Diffusion
     min_chain_length  = 25,
@@ -211,10 +211,10 @@ def run_direct_topology_optimization(
         return {'N_final_fibers': 0, 'Total_pipeline_runtime_sec': float(time.time() - t_total)}
 
     # -------------------------------------------------------------------------
-    # STAGE 4: Direction-Durable Multi-Probe Gap Bridging
+    # STAGE 4: Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
-    print(" STAGE 4: Global Direction-Durable Multi-Probe Gap Bridging", flush=True)
+    print(" STAGE 4: Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search", flush=True)
     print("=" * 85, flush=True)
     t4 = time.time()
 
@@ -229,10 +229,10 @@ def run_direct_topology_optimization(
         n_gap_samples=params['n_gap_samples'],
         verbose=verbose,
     )
-    print(f"  Gap bridging complete in {time.time()-t4:.1f}s -- {len(candidates)} candidate bridges", flush=True)
+    print(f"  Gap candidate search complete in {time.time()-t4:.1f}s -- {len(candidates)} candidate bridges", flush=True)
 
     # -------------------------------------------------------------------------
-    # STAGE 5: Global Min-Cost Topology Optimization
+    # STAGE 5: Global Min-Cost Topology Optimization of post-H-sever fragments
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
     print(" STAGE 5: Global Min-Cost Topology Optimization (Degree <= 1)", flush=True)
