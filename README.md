@@ -37,7 +37,7 @@ Rather than predicting fragile 1-voxel binary masks that coalesce touching fiber
 ## 🧠 Framework Architecture
 
 ```
-                    Input 3D Volume Patch (1 x 96 x 96 x 96)
+                    Input 3D Volume Patch (1 x 64 x 64 x 64)
                                        │
                 ┌──────────────────────┴──────────────────────┐
                 ▼                                             ▼
@@ -229,7 +229,7 @@ Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser.
 # Train both specialist models sequentially
 python training/train_both.py \
     --epochs 20 \
-    --patch-size 96 \
+    --patch-size 64 \
     --batch-size 2 \
     --grad-accum-steps 2
 ```

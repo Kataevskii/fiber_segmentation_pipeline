@@ -7,22 +7,22 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from core.models import IntensityUNet3D
+from core.models import IntensityUNet3D, infer_base_channels_from_checkpoint
 from core.losses import IntensityLoss
 from core.dataset import Fiber3DPatchDataset
 
 def train_intensity_model(
     data_dir=['augmented_data', 'real_train_data/curated_patches'],
-    real_data_dir='real_train_data',
-    real_stamp_prob=0.60,
+    real_data_dir=None,
+    real_stamp_prob=0.0,
     test_dir='test_data',
     val_dir='val_data',
-    patch_size=96,
+    patch_size=64,
     batch_size=2,
     grad_accum_steps=2,
     epochs=10,
     samples_per_epoch=250,
-    base_channels=24,
+    base_channels=32,
     lr=5e-4,
     pretrained_path=None,
     save_path='checkpoints/best_intensity_unet.pth',
@@ -31,10 +31,22 @@ def train_intensity_model(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("=" * 80, flush=True)
     print(f" TRAINING INDEPENDENT INTENSITY SPECIALIST (IntensityUNet3D) ON {device}", flush=True)
-    print(f"  - Model Channels: {base_channels} | Batch Size: {batch_size} | Epochs: {epochs}")
+    effective_base_channels = base_channels
+    pretrained_ckpt = None
+    if pretrained_path and os.path.exists(pretrained_path):
+        try:
+            pretrained_ckpt = torch.load(pretrained_path, map_location=device, weights_only=False)
+            effective_base_channels = infer_base_channels_from_checkpoint(pretrained_ckpt, default=base_channels)
+        except Exception:
+            effective_base_channels = base_channels
+
+    print(f"  - Model Channels: {effective_base_channels} | Batch Size: {batch_size} | Epochs: {epochs}")
     print(f"  - Patch Size: {patch_size}x{patch_size}x{patch_size} | Samples/Epoch: {samples_per_epoch}")
     print(f"  - Train Data: {data_dir}")
-    print(f"  - Real Fiber Stamping: {real_data_dir} (Prob: {real_stamp_prob:.0%})")
+    if real_data_dir and real_stamp_prob > 0:
+        print(f"  - Real Fiber Stamping: {real_data_dir} (Prob: {real_stamp_prob:.0%})")
+    else:
+        print(f"  - Real Fiber Stamping: disabled")
     print(f"  - Warm-Start Pretrained Path: {pretrained_path}")
     print(f"  - Save Path: {save_path}")
     print("=" * 80, flush=True)
@@ -49,7 +61,8 @@ def train_intensity_model(
         patch_size=patch_size,
         samples_per_epoch=samples_per_epoch,
         augment=True,
-        fg_prob=0.85
+        fg_prob=0.85,
+        jitter_voxels=2
     )
     test_dataset = Fiber3DPatchDataset(
         data_dir=test_dir,
@@ -72,11 +85,11 @@ def train_intensity_model(
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=(device.type == 'cuda'))
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=(device.type == 'cuda')) if val_dataset else None
 
-    model = IntensityUNet3D(in_channels=1, base_channels=base_channels).to(device)
+    model = IntensityUNet3D(in_channels=1, base_channels=effective_base_channels).to(device)
 
     if pretrained_path and os.path.exists(pretrained_path):
         try:
-            ckpt = torch.load(pretrained_path, map_location=device, weights_only=False)
+            ckpt = pretrained_ckpt if pretrained_ckpt is not None else torch.load(pretrained_path, map_location=device, weights_only=False)
             if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
                 model.load_state_dict(ckpt['model_state_dict'])
             elif isinstance(ckpt, dict):
@@ -158,7 +171,7 @@ def train_intensity_model(
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
-                'base_channels': base_channels,
+                'base_channels': effective_base_channels,
                 'patch_size': patch_size,
                 'val_loss': val_loss,
                 'val_dice': val_dice

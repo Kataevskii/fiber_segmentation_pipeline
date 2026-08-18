@@ -27,14 +27,14 @@ from tqdm import tqdm
 # Ensure package root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from core.models import IntensityUNet3D, OrientationUNet3D
+from core.models import IntensityUNet3D, OrientationUNet3D, infer_base_channels_from_checkpoint
 
 
 def predict_sliding_window(
     model,
     volume,
     out_npy_path,
-    patch_size=96,
+    patch_size=64,
     stride=32,
     device='cuda',
     out_channels=1,
@@ -167,10 +167,10 @@ def run_inference(
     input_path='process_data/COLLAGENCROP_003_0000.tif',
     intensity_ckpt='checkpoints/best_intensity_unet.pth',
     orientation_ckpt='checkpoints/best_orientation_unet.pth',
-    patch_size=96,
+    patch_size=64,
     stride=32,
     batch_size=4,
-    base_channels=24,
+    base_channels=32,
     output_prefix='outputs/dual_collagen',
     mode='both',
     chunk_size=32
@@ -235,9 +235,10 @@ def run_inference(
     # 2. Predict Intensity Potential Field with Specialist 1
     if do_intensity:
         print("\n--- Running Sliding Window Inference with IntensityUNet3D ---", flush=True)
-        intensity_model = IntensityUNet3D(in_channels=1, base_channels=base_channels).to(device)
         if os.path.exists(intensity_ckpt):
             ckpt_int = torch.load(intensity_ckpt, map_location=device)
+            intensity_base_channels = infer_base_channels_from_checkpoint(ckpt_int, default=base_channels)
+            intensity_model = IntensityUNet3D(in_channels=1, base_channels=intensity_base_channels).to(device)
             intensity_model.load_state_dict(ckpt_int['model_state_dict'])
             print(f"Loaded Intensity checkpoint: {intensity_ckpt}", flush=True)
         else:
@@ -292,9 +293,10 @@ def run_inference(
     # 3. Predict 3D Orientation Vector Field with Specialist 2
     if do_orientation:
         print("\n--- Running Sliding Window Inference with OrientationUNet3D ---", flush=True)
-        orientation_model = OrientationUNet3D(in_channels=1, base_channels=base_channels).to(device)
         if os.path.exists(orientation_ckpt):
             ckpt_ori = torch.load(orientation_ckpt, map_location=device)
+            orientation_base_channels = infer_base_channels_from_checkpoint(ckpt_ori, default=base_channels)
+            orientation_model = OrientationUNet3D(in_channels=1, base_channels=orientation_base_channels).to(device)
             orientation_model.load_state_dict(ckpt_ori['model_state_dict'])
             print(f"Loaded Orientation checkpoint: {orientation_ckpt}", flush=True)
         else:
@@ -376,10 +378,10 @@ if __name__ == '__main__':
     parser.add_argument('--skip-orientation', action='store_true', help="Skip Orientation Specialist (runs Intensity only)")
     parser.add_argument('--intensity-ckpt', type=str, default='checkpoints/best_intensity_unet.pth', help="Path to Intensity model checkpoint")
     parser.add_argument('--orientation-ckpt', type=str, default='checkpoints/best_orientation_unet.pth', help="Path to Orientation model checkpoint")
-    parser.add_argument('--patch-size', type=int, default=96, help="3D sliding window patch cube size")
+    parser.add_argument('--patch-size', type=int, default=64, help="3D sliding window patch cube size")
     parser.add_argument('--stride', type=int, default=32, help="Sliding window stride step")
     parser.add_argument('--batch-size', type=int, default=4, help="GPU batch size")
-    parser.add_argument('--base-channels', type=int, default=24, help="U-Net base channel capacity")
+    parser.add_argument('--base-channels', type=int, default=32, help="U-Net base channel capacity")
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
     parser.add_argument('--output-prefix', type=str, default='outputs/dual_collagen', help="Output path prefix")
     args = parser.parse_args()

@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--input', type=str, default='process_data/COLLAGENCROP_003_0000.tif', help="Input microscopy volume (.tif)")
     parser.add_argument('--intensity-ckpt', type=str, default='checkpoints/best_intensity_unet.pth')
     parser.add_argument('--orientation-ckpt', type=str, default='checkpoints/best_orientation_unet.pth')
-    parser.add_argument('--patch-size', type=int, default=96)
+    parser.add_argument('--patch-size', type=int, default=64)
     parser.add_argument('--stride', type=int, default=32)
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--out', type=str, default='outputs/fiber_resolution_final')

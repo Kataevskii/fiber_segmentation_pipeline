@@ -12,9 +12,9 @@ def main():
     parser.add_argument('--epochs', type=int, default=20, help="Number of training epochs per model (default: 20)")
     parser.add_argument('--batch-size', type=int, default=2, help="Batch size (default: 2)")
     parser.add_argument('--grad-accum-steps', type=int, default=2, help="Gradient accumulation steps (default: 2)")
-    parser.add_argument('--patch-size', type=int, default=96, help="3D Patch size (default: 96)")
+    parser.add_argument('--patch-size', type=int, default=64, help="3D Patch size (default: 64)")
     parser.add_argument('--samples-per-epoch', type=int, default=200, help="Samples per epoch (default: 200)")
-    parser.add_argument('--base-channels', type=int, default=24, help="Base U-Net channels (default: 24)")
+    parser.add_argument('--base-channels', type=int, default=32, help="Base U-Net channels (default: 32)")
     parser.add_argument('--lr', type=float, default=5e-4, help="Learning rate (default: 5e-4)")
     parser.add_argument('--pretrained', action='store_true', help="Warm-start from standard checkpoints/best_*.pth")
     parser.add_argument('--pretrained-intensity', type=str, default=None, help="Custom pretrained intensity checkpoint path")
@@ -40,7 +40,9 @@ def main():
             samples_per_epoch=args.samples_per_epoch,
             base_channels=args.base_channels,
             lr=args.lr,
-            pretrained_path=int_pretrained
+            pretrained_path=int_pretrained,
+            real_data_dir=None,
+            real_stamp_prob=0.0
         )
 
     if args.mode in ['both', 'orientation']:
@@ -55,7 +57,9 @@ def main():
             samples_per_epoch=args.samples_per_epoch,
             base_channels=args.base_channels,
             lr=args.lr,
-            pretrained_path=ori_pretrained
+            pretrained_path=ori_pretrained,
+            real_data_dir=None,
+            real_stamp_prob=0.0
         )
 
     print("\n" + "=" * 80)
