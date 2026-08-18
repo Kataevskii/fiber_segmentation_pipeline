@@ -227,7 +227,7 @@ Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser.
 ### 5. Train Specialist Models
 ```bash
 # Train both specialist models sequentially
-python fiber_resolution_pipeline/training/train_both.py \
+python training/train_both.py \
     --epochs 20 \
     --patch-size 96 \
     --batch-size 2 \

@@ -757,5 +757,5 @@ if __name__ == '__main__':
         mode=args.mode,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
-        min_overlap_ratio=args.min_overlap_ratio
+        # min_overlap_ratio=args.min_overlap_ratio
     )

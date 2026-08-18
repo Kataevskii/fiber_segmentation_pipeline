@@ -9,7 +9,7 @@ from curation_tool.engine import RealDataCurationEngine
 app = Flask(__name__)
 
 engine = RealDataCurationEngine(
-    raw_volume_path='process_data/FULL_0000.tif',
+    raw_volume_path='process_data/COLLAGENCROP_003_0000.tif',
     curated_output_dir='real_train_data/curated_patches',
     cube_size=96
 )
@@ -125,6 +125,112 @@ HTML_TEMPLATE = """
             border-color: rgba(0, 230, 118, 0.4);
             background: rgba(0, 230, 118, 0.08);
             color: var(--accent-lime);
+        }
+
+        .coord-selector-capsule {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: var(--bg-surface-raised);
+            border: 1px solid var(--border-subtle);
+            padding: 3px 8px;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+
+        .coord-selector-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+        }
+
+        .coord-field-group {
+            display: flex;
+            align-items: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            padding: 2px 4px;
+            gap: 2px;
+        }
+
+        .coord-field-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 800;
+            color: var(--text-secondary);
+        }
+
+        .coord-field-input {
+            width: 42px;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            text-align: center;
+            outline: none;
+            -moz-appearance: textfield;
+        }
+
+        .coord-field-input::-webkit-outer-spin-button,
+        .coord-field-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .coord-field-input:focus {
+            color: var(--accent-cyan);
+        }
+
+        .btn-load-coords {
+            background: rgba(0, 229, 255, 0.15);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }
+
+        .btn-load-coords:hover {
+            background: var(--accent-cyan);
+            color: #051016;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+        }
+
+        .nudge-group {
+            display: flex;
+            gap: 2px;
+            align-items: center;
+            border-left: 1px solid var(--border-subtle);
+            padding-left: 5px;
+            margin-left: 2px;
+        }
+
+        .btn-nudge {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.1s ease;
+        }
+
+        .btn-nudge:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            background: var(--bg-surface);
         }
 
         .header-actions {
@@ -747,6 +853,34 @@ HTML_TEMPLATE = """
                 <div class="badge" id="origin-badge">Origin: <strong>(Z=0, Y=0, X=0)</strong></div>
                 <div class="badge" id="density-badge">Density: <strong>10.2%</strong></div>
                 <div class="badge highlight" id="total-badge">💾 Curated: <strong id="curated-count">0</strong></div>
+            </div>
+        </div>
+
+        <!-- Manual Coordinate Selector -->
+        <div class="coord-selector-capsule" title="Manually select raw volume coordinates (Z, Y, X) to extract 96³ cube">
+            <span class="coord-selector-title">📍 Origin:</span>
+            <div class="coord-field-group" title="Z coordinate (depth). Scroll or type">
+                <span class="coord-field-label">Z:</span>
+                <input type="number" id="load-coord-z" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-z', 16)">
+            </div>
+            <div class="coord-field-group" title="Y coordinate (height). Scroll or type">
+                <span class="coord-field-label">Y:</span>
+                <input type="number" id="load-coord-y" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-y', 16)">
+            </div>
+            <div class="coord-field-group" title="X coordinate (width). Scroll or type">
+                <span class="coord-field-label">X:</span>
+                <input type="number" id="load-coord-x" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-x', 16)">
+            </div>
+            <button class="btn-load-coords" onclick="loadManualCoordinates()" title="Extract 96³ cube at manual coordinates [Enter]">
+                Load Coords ↵
+            </button>
+            <div class="nudge-group" title="Step subvolume along axes by 32 vx">
+                <button class="btn-nudge" onclick="nudgeCoords(0, 0, -32)" title="Step X -32">◀X</button>
+                <button class="btn-nudge" onclick="nudgeCoords(0, 0, 32)" title="Step X +32">X▶</button>
+                <button class="btn-nudge" onclick="nudgeCoords(0, -32, 0)" title="Step Y -32">▲Y</button>
+                <button class="btn-nudge" onclick="nudgeCoords(0, 32, 0)" title="Step Y +32">Y▼</button>
+                <button class="btn-nudge" onclick="nudgeCoords(-32, 0, 0)" title="Step Z -32">◀Z</button>
+                <button class="btn-nudge" onclick="nudgeCoords(32, 0, 0)" title="Step Z +32">Z▶</button>
             </div>
         </div>
 
@@ -1627,6 +1761,110 @@ HTML_TEMPLATE = """
             }
         }
 
+        function updateCoordinateInputs(origin, maxOrigin) {
+            if (!origin) return;
+            const zInput = document.getElementById('load-coord-z');
+            const yInput = document.getElementById('load-coord-y');
+            const xInput = document.getElementById('load-coord-x');
+            if (zInput) zInput.value = origin[0];
+            if (yInput) yInput.value = origin[1];
+            if (xInput) xInput.value = origin[2];
+            if (maxOrigin) {
+                if (zInput) zInput.max = maxOrigin[0];
+                if (yInput) yInput.max = maxOrigin[1];
+                if (xInput) xInput.max = maxOrigin[2];
+            }
+        }
+
+        function handleCoordKey(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                loadManualCoordinates();
+            }
+        }
+
+        async function loadManualCoordinates(zVal, yVal, xVal) {
+            try {
+                let z = zVal !== undefined ? parseInt(zVal) : parseInt(document.getElementById('load-coord-z').value || 0);
+                let y = yVal !== undefined ? parseInt(yVal) : parseInt(document.getElementById('load-coord-y').value || 0);
+                let x = xVal !== undefined ? parseInt(xVal) : parseInt(document.getElementById('load-coord-x').value || 0);
+
+                if (isNaN(z)) z = 0;
+                if (isNaN(y)) y = 0;
+                if (isNaN(x)) x = 0;
+
+                currentlyLoadedPatchIndex = null;
+                const sel = document.getElementById('saved-patches-select');
+                if (sel) sel.value = '';
+
+                document.getElementById('perf-badge').innerText = `⏳ Loading 96³ Subvolume at (${z}, ${y}, ${x})...`;
+                const res = await fetch('/api/patch/coords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ z, y, x })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Failed to load coordinates");
+                    return;
+                }
+
+                currentPatchData = data;
+                seedsList = [];
+                autoCandidatesList = data.auto_candidates || [];
+
+                updateCoordinateInputs(data.origin, data.max_origin);
+
+                document.getElementById('origin-badge').innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+                document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
+                document.getElementById('curated-count').innerText = data.curated_total;
+                document.getElementById('perf-badge').innerText = `📍 Loaded 96³ Subvolume at Origin (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
+
+                // Update 3D Face Canvas Textures & Point Cloud
+                updateThreeFaceTextures(data.face_images, data.face_images_rgba);
+                updateThreePointCloud(data.point_cloud);
+
+                // Update 3D MIPs
+                document.getElementById('mip-xy').src = data.mip_images.raw_xy;
+                document.getElementById('mip-xz').src = data.mip_images.raw_xz;
+                document.getElementById('mip-yz').src = data.mip_images.raw_yz;
+
+                // Update Slices
+                allSlicesCache = data.slices || [];
+                handleSliceSlider(document.getElementById('slice-slider').value);
+
+                // Clear 3D curves & seed pins & reset active ID to 1
+                activeFiberId = 1;
+                renderThree3DCurves(null);
+                updateThreeSeeds();
+                updateSeedsDock();
+                initIdSelector();
+            } catch (err) {
+                console.error("Failed to load coordinates:", err);
+                document.getElementById('perf-badge').innerText = '❌ Error loading coordinates';
+            }
+        }
+
+        function nudgeCoords(dz, dy, dx) {
+            const zInput = document.getElementById('load-coord-z');
+            const yInput = document.getElementById('load-coord-y');
+            const xInput = document.getElementById('load-coord-x');
+
+            let z = (parseInt(zInput ? zInput.value : 0) || 0) + dz;
+            let y = (parseInt(yInput ? yInput.value : 0) || 0) + dy;
+            let x = (parseInt(xInput ? xInput.value : 0) || 0) + dx;
+
+            if (zInput && zInput.max) z = Math.max(0, Math.min(parseInt(zInput.max), z));
+            if (yInput && yInput.max) y = Math.max(0, Math.min(parseInt(yInput.max), y));
+            if (xInput && xInput.max) x = Math.max(0, Math.min(parseInt(xInput.max), x));
+
+            if (zInput) zInput.value = z;
+            if (yInput) yInput.value = y;
+            if (xInput) xInput.value = x;
+
+            loadManualCoordinates(z, y, x);
+        }
+
         async function loadSavedPatch(patchId) {
             if (!patchId) return;
             try {
@@ -1646,6 +1884,8 @@ HTML_TEMPLATE = """
                 currentPatchData = data;
                 seedsList = data.loaded_seeds || [];
                 autoCandidatesList = [];
+
+                updateCoordinateInputs(data.origin, data.max_origin);
 
                 document.getElementById('origin-badge').innerHTML = `Sample: <strong>#${String(patchId).padStart(4, '0')}</strong> (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
                 document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
@@ -1688,6 +1928,8 @@ HTML_TEMPLATE = """
                 currentPatchData = data;
                 seedsList = [];
                 autoCandidatesList = data.auto_candidates || [];
+
+                updateCoordinateInputs(data.origin, data.max_origin);
 
                 document.getElementById('origin-badge').innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
                 document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
@@ -1880,6 +2122,15 @@ HTML_TEMPLATE = """
         }
 
         window.addEventListener('keydown', (e) => {
+            // Do not trigger global hotkeys when typing inside inputs or select elements
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+                if (e.code === 'Enter' && e.target.classList.contains('global-coord-input')) {
+                    e.preventDefault();
+                    loadManualCoordinates();
+                }
+                return;
+            }
+
             if (e.code === 'Space') {
                 e.preventDefault();
                 resolveConnections();
@@ -1923,8 +2174,34 @@ def index():
 
 @app.route('/api/patch/new', methods=['GET'])
 def api_new_patch():
+    if 'z' in request.args and 'y' in request.args and 'x' in request.args:
+        try:
+            z = int(request.args.get('z', 0))
+            y = int(request.args.get('y', 0))
+            x = int(request.args.get('x', 0))
+            patch_info = engine.extract_patch_at(z, y, x)
+            return jsonify(patch_info)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 400
     patch_info = engine.extract_random_patch()
     return jsonify(patch_info)
+
+@app.route('/api/patch/coords', methods=['POST', 'GET'])
+def api_load_patch_coords():
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        z = int(data.get('z', 0))
+        y = int(data.get('y', 0))
+        x = int(data.get('x', 0))
+    else:
+        z = int(request.args.get('z', 0))
+        y = int(request.args.get('y', 0))
+        x = int(request.args.get('x', 0))
+    try:
+        patch_info = engine.extract_patch_at(z, y, x)
+        return jsonify(patch_info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/api/patches/list', methods=['GET'])
 def api_list_patches():
@@ -1962,7 +2239,10 @@ def api_save():
 def api_stats():
     return jsonify({
         'curated_total': engine.patch_counter,
-        'curated_dir': engine.curated_output_dir
+        'curated_dir': engine.curated_output_dir,
+        'volume_shape': [int(engine.D), int(engine.H), int(engine.W)],
+        'max_origin': [int(max(0, engine.D - engine.cube_size)), int(max(0, engine.H - engine.cube_size)), int(max(0, engine.W - engine.cube_size))],
+        'cube_size': engine.cube_size
     })
 
 if __name__ == '__main__':

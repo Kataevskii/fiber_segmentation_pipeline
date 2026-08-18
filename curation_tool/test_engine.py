@@ -16,14 +16,29 @@ def test_curation_engine():
     )
 
     # 1. Test random patch extraction
-    print("\n--- [1/3] Testing Random 96x96x96 Patch Extraction ---")
+    print("\n--- [1/4] Testing Random 96x96x96 Patch Extraction ---")
     patch_info = engine.extract_random_patch(min_density=0.04, max_density=0.20)
     print(f"Extracted Patch Origin: {patch_info['origin']}, Density: {patch_info['density']*100:.2f}%")
     print(f"Auto-detected {len(patch_info['auto_candidates'])} candidate face blobs.")
     assert len(patch_info['face_images']) == 6, "Expected 6 face images"
+    assert 'volume_shape' in patch_info and 'max_origin' in patch_info
 
-    # 2. Test seed connection resolution
-    print("\n--- [2/3] Testing Deterministic Geodesic Path Resolution ---")
+    # 2. Test manual coordinate patch extraction
+    print("\n--- [2/4] Testing Manual Coordinate Patch Extraction (Z=100, Y=120, X=140) ---")
+    vol_info = engine.get_volume_info()
+    print(f"Volume Info: Shape={vol_info['shape']}, CubeSize={vol_info['cube_size']}, MaxOrigin={vol_info['max_origin']}")
+    manual_patch = engine.extract_patch_at(100, 120, 140)
+    print(f"Manual Patch Origin: {manual_patch['origin']}, Density: {manual_patch['density']*100:.2f}%")
+    assert manual_patch['origin'] == [100, 120, 140], f"Expected [100, 120, 140], got {manual_patch['origin']}"
+    assert len(manual_patch['face_images']) == 6, "Expected 6 face images"
+
+    # Test coordinate clamping on overflow
+    clamped_patch = engine.extract_patch_at(9999, 9999, 9999)
+    print(f"Overflow Clamped Origin: {clamped_patch['origin']} (Max Expected: {vol_info['max_origin']})")
+    assert clamped_patch['origin'] == vol_info['max_origin']
+
+    # 3. Test seed connection resolution
+    print("\n--- [3/4] Testing Deterministic Geodesic Path Resolution ---")
     candidates = patch_info['auto_candidates']
     if len(candidates) >= 2:
         # Create paired seeds for Fiber 1, and singleton for Fiber 2
@@ -45,8 +60,8 @@ def test_curation_engine():
     print(f"Resolution Successful: {res['success']}, Resolved {res['num_fibers']} fibers in {res['resolve_time_ms']} ms!")
     assert res['success'] == True
 
-    # 3. Test saving curated sample
-    print("\n--- [3/3] Testing Save Curated Sample to real_train_data/curated_patches/ ---")
+    # 4. Test saving curated sample
+    print("\n--- [4/4] Testing Save Curated Sample to real_train_data/curated_patches/ ---")
     save_res = engine.save_current_curated_sample()
     print(f"Saved Curated Patch #{save_res['saved_index']} to {save_res['prefix']}*")
     

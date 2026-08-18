@@ -56,9 +56,9 @@ class RealDataCurationEngine:
         """Extracts a random 96x96x96 subvolume with valid fiber material."""
         S = self.cube_size
         for attempt in range(max_attempts):
-            z = int(np.random.randint(0, self.D - S + 1))
-            y = int(np.random.randint(0, self.H - S + 1))
-            x = int(np.random.randint(0, self.W - S + 1))
+            z = int(np.random.randint(0, max(1, self.D - S + 1)))
+            y = int(np.random.randint(0, max(1, self.H - S + 1)))
+            x = int(np.random.randint(0, max(1, self.W - S + 1)))
 
             patch = self.full_vol[z:z+S, y:y+S, x:x+S]
             density = float(np.mean(patch))
@@ -66,10 +66,30 @@ class RealDataCurationEngine:
                 return self.set_current_patch(z, y, x)
 
         # Fallback
-        z = (self.D - S) // 2
-        y = (self.H - S) // 2
-        x = (self.W - S) // 2
+        z = max(0, (self.D - S) // 2)
+        y = max(0, (self.H - S) // 2)
+        x = max(0, (self.W - S) // 2)
         return self.set_current_patch(z, y, x)
+
+    def extract_patch_at(self, z, y, x):
+        """
+        Extracts a 96x96x96 subvolume at manually specified (z, y, x) origin coordinates.
+        Coordinates are clamped to valid ranges [0, max_valid_dim].
+        """
+        self.current_loaded_index = None
+        return self.set_current_patch(int(z), int(y), int(x))
+
+    def get_volume_info(self):
+        """Returns volume spatial shape and maximal origin bounds for UI/API clients."""
+        S = self.cube_size
+        return {
+            'raw_volume_path': self.raw_volume_path,
+            'shape': [int(self.D), int(self.H), int(self.W)],
+            'cube_size': int(S),
+            'max_origin': [int(max(0, self.D - S)), int(max(0, self.H - S)), int(max(0, self.W - S))],
+            'curated_total': self.patch_counter,
+            'overall_density': float(np.mean(self.full_vol))
+        }
 
     def get_face_images_base64(self, transparent_zeros=True):
         S = self.cube_size
@@ -624,8 +644,10 @@ class RealDataCurationEngine:
         face_imgs, face_imgs_rgba = self.get_face_images_base64()
 
         return {
-            'origin': self.current_patch_origin,
+            'origin': list(self.current_patch_origin),
             'cube_size': S,
+            'volume_shape': [int(self.D), int(self.H), int(self.W)],
+            'max_origin': [int(max(0, self.D - S)), int(max(0, self.H - S)), int(max(0, self.W - S))],
             'density': float(np.mean(self.current_patch_bin)),
             'face_images': face_imgs,
             'face_images_rgba': face_imgs_rgba,
