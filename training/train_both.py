@@ -10,8 +10,8 @@ from core.dataset import ensure_individual_fibers_extracted
 def main():
     parser = argparse.ArgumentParser(description="Master Training Script for Dual Decoupled 3D Models")
     parser.add_argument('--epochs', type=int, default=20, help="Number of training epochs per model (default: 20)")
-    parser.add_argument('--batch-size', type=int, default=2, help="Batch size (default: 2)")
-    parser.add_argument('--grad-accum-steps', type=int, default=2, help="Gradient accumulation steps (default: 2)")
+    parser.add_argument('--batch-size', type=int, default=5, help="Batch size (default: 5)")
+    parser.add_argument('--grad-accum-steps', type=int, default=1, help="Gradient accumulation steps (default: 1)")
     parser.add_argument('--patch-size', type=int, default=64, help="3D Patch size (default: 64)")
     parser.add_argument('--samples-per-epoch', type=int, default=200, help="Samples per epoch (default: 200)")
     parser.add_argument('--base-channels', type=int, default=32, help="Base U-Net channels (default: 32)")
@@ -19,6 +19,10 @@ def main():
     parser.add_argument('--pretrained', action='store_true', help="Warm-start from standard checkpoints/best_*.pth")
     parser.add_argument('--pretrained-intensity', type=str, default=None, help="Custom pretrained intensity checkpoint path")
     parser.add_argument('--pretrained-orientation', type=str, default=None, help="Custom pretrained orientation checkpoint path")
+    parser.add_argument('--real-data-dir', type=str, default='real_train_data', help="Directory containing curated real fibers for real stamping")
+    parser.add_argument('--real-stamp-prob', type=float, default=0.25, help="Probability of stamping real fibers into synthetic training patches")
+    parser.add_argument('--real-repeat', type=int, default=3, help="How many times to repeat real curated training triplets relative to synthetic data")
+    parser.add_argument('--train-on-all-data', action='store_true', help="Use all real curated patches for training and skip held-out real validation")
     parser.add_argument('--mode', type=str, choices=['both', 'intensity', 'orientation'], default='both',
                         help="Which model(s) to train (default: both)")
     args = parser.parse_args()
@@ -41,8 +45,10 @@ def main():
             base_channels=args.base_channels,
             lr=args.lr,
             pretrained_path=int_pretrained,
-            real_data_dir=None,
-            real_stamp_prob=0.0
+            real_data_dir=args.real_data_dir,
+            real_stamp_prob=args.real_stamp_prob,
+            real_repeat=args.real_repeat,
+            train_on_all_data=args.train_on_all_data
         )
 
     if args.mode in ['both', 'orientation']:
@@ -58,8 +64,10 @@ def main():
             base_channels=args.base_channels,
             lr=args.lr,
             pretrained_path=ori_pretrained,
-            real_data_dir=None,
-            real_stamp_prob=0.0
+            real_data_dir=args.real_data_dir,
+            real_stamp_prob=args.real_stamp_prob,
+            real_repeat=args.real_repeat,
+            train_on_all_data=args.train_on_all_data
         )
 
     print("\n" + "=" * 80)

@@ -26,7 +26,7 @@ WEIGHT_CURVATURE      = 8.0
 
 # Extra penalty if a single junction angle exceeds this threshold (radians)
 SHARP_ANGLE_THRESHOLD = np.deg2rad(55)   # 55° is a "hard bend"
-SHARP_ANGLE_PENALTY   = 20.0            # flat penalty per offending junction
+SHARP_ANGLE_PENALTY   = 50.0            # flat penalty per offending junction
 
 # Stub penalty: added per fragment to discourage leaving short isolated stubs
 # Effective penalty = STUB_PENALTY / fragment_length

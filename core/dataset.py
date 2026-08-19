@@ -88,6 +88,76 @@ def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=
     return total_stamps
 
 
+def collect_dataset_triplets(data_dir):
+    """Collect volume/intensity/orientation triplets from one directory or a list of directories."""
+    dir_list = [data_dir] if isinstance(data_dir, str) else list(data_dir)
+    if isinstance(data_dir, str) and ',' in data_dir:
+        dir_list = [d.strip() for d in data_dir.split(',') if d.strip()]
+
+    volume_paths = []
+    intensity_paths = []
+    orientation_paths = []
+
+    for d in dir_list:
+        if not os.path.exists(d):
+            continue
+
+        files = sorted(os.listdir(d))
+        v_sub = sorted([os.path.join(d, f) for f in files if f.endswith('_vol.npy')])
+        if not v_sub:
+            v_sub = sorted([os.path.join(d, f) for f in files if f.endswith('_vol.tif')])
+
+        for v_path in v_sub:
+            if v_path.endswith('_vol.npy'):
+                i_path = v_path.replace('_vol.npy', '_intensity.npy')
+                if not os.path.exists(i_path):
+                    i_path = v_path.replace('_vol.npy', '_intensity.tif')
+                if not os.path.exists(i_path):
+                    i_path = v_path.replace('_vol.npy', '_centerline.npy')
+                if not os.path.exists(i_path):
+                    i_path = v_path.replace('_vol.npy', '_centerline.tif')
+                o_path = v_path.replace('_vol.npy', '_ori.npy')
+            else:
+                i_path = v_path.replace('_vol.tif', '_intensity.tif')
+                if not os.path.exists(i_path):
+                    i_path = v_path.replace('_vol.tif', '_centerline.tif')
+                o_path = v_path.replace('_vol.tif', '_ori.npy')
+
+            if os.path.exists(v_path) and os.path.exists(i_path) and os.path.exists(o_path):
+                volume_paths.append(v_path)
+                intensity_paths.append(i_path)
+                orientation_paths.append(o_path)
+
+    return volume_paths, intensity_paths, orientation_paths
+
+
+def split_real_validation_triplets(data_dir, holdout_every=5):
+    """Split a real dataset directory into deterministic train and validation triplets."""
+    volume_paths, intensity_paths, orientation_paths = collect_dataset_triplets(data_dir)
+    if not volume_paths:
+        return ([], [], []), ([], [], [])
+
+    train_vols, train_ints, train_oris = [], [], []
+    val_vols, val_ints, val_oris = [], [], []
+
+    for index, (v_path, i_path, o_path) in enumerate(zip(volume_paths, intensity_paths, orientation_paths)):
+        if holdout_every > 0 and index % holdout_every == 0:
+            val_vols.append(v_path)
+            val_ints.append(i_path)
+            val_oris.append(o_path)
+        else:
+            train_vols.append(v_path)
+            train_ints.append(i_path)
+            train_oris.append(o_path)
+
+    if not val_vols and train_vols:
+        val_vols.append(train_vols.pop())
+        val_ints.append(train_ints.pop())
+        val_oris.append(train_oris.pop())
+
+    return (train_vols, train_ints, train_oris), (val_vols, val_ints, val_oris)
+
+
 class Fiber3DPatchDataset(Dataset):
     """
     Zero-Copy Memory-Mapped 3D Patch Dataset for PyTorch DataLoader (Optimized for Windows Multiprocessing).

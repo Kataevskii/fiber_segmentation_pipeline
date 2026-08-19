@@ -99,5 +99,5 @@ def prepare_all_datasets(overwrite=False):
     print("=" * 75, flush=True)
 
 if __name__ == '__main__':
-    prepare_all_datasets()
+    prepare_all_datasets(overwrite=True)
 
