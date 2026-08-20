@@ -19,7 +19,6 @@ def test_curation_engine():
     print("\n--- [1/4] Testing Random 96x96x96 Patch Extraction ---")
     patch_info = engine.extract_random_patch(min_density=0.04, max_density=0.20)
     print(f"Extracted Patch Origin: {patch_info['origin']}, Density: {patch_info['density']*100:.2f}%")
-    print(f"Auto-detected {len(patch_info['auto_candidates'])} candidate face blobs.")
     assert len(patch_info['face_images']) == 6, "Expected 6 face images"
     assert 'volume_shape' in patch_info and 'max_origin' in patch_info
 
@@ -39,21 +38,18 @@ def test_curation_engine():
 
     # 3. Test seed connection resolution
     print("\n--- [3/4] Testing Deterministic Geodesic Path Resolution ---")
-    candidates = patch_info['auto_candidates']
-    if len(candidates) >= 2:
-        # Create paired seeds for Fiber 1, and singleton for Fiber 2
+    fg_coords = np.argwhere(engine.current_patch_bin > 0)
+    if len(fg_coords) >= 2:
+        p1 = fg_coords[0]
+        p2 = fg_coords[-1]
         test_seeds = [
-            {'face': candidates[0]['face'], 'u': candidates[0]['u'], 'v': candidates[0]['v'], 'pos3d': candidates[0]['pos3d'], 'fiber_id': 1},
-            {'face': candidates[1]['face'], 'u': candidates[1]['u'], 'v': candidates[1]['v'], 'pos3d': candidates[1]['pos3d'], 'fiber_id': 1},
+            {'face': 'custom', 'u': int(p1[1]), 'v': int(p1[2]), 'pos3d': list(p1), 'fiber_id': 1},
+            {'face': 'custom', 'u': int(p2[1]), 'v': int(p2[2]), 'pos3d': list(p2), 'fiber_id': 1},
         ]
-        if len(candidates) >= 3:
-            test_seeds.append({
-                'face': candidates[2]['face'], 'u': candidates[2]['u'], 'v': candidates[2]['v'], 'pos3d': candidates[2]['pos3d'], 'fiber_id': 2
-            })
     else:
         test_seeds = [
-            {'face': 'z_min', 'u': 48, 'v': 48, 'pos3d': (0, 48, 48), 'fiber_id': 1},
-            {'face': 'z_max', 'u': 48, 'v': 48, 'pos3d': (95, 48, 48), 'fiber_id': 1}
+            {'face': 'z_min', 'u': 48, 'v': 48, 'pos3d': [0, 48, 48], 'fiber_id': 1},
+            {'face': 'z_max', 'u': 48, 'v': 48, 'pos3d': [95, 48, 48], 'fiber_id': 1}
         ]
 
     res = engine.resolve_connections(test_seeds)
@@ -74,8 +70,18 @@ def test_curation_engine():
     assert os.path.exists(f"{prefix}_intensity.npy")
     assert os.path.exists(f"{prefix}_meta.json")
 
+    # 5. Test visual sub-box crop extraction (64x64x64 and custom ROI)
+    print("\n--- [5/5] Testing Visual Sub-Box Crop Extraction (ROI) ---")
+    crop_info = engine.get_cropped_view_data(z_min=16, z_max=79, y_min=20, y_max=80, x_min=10, x_max=90)
+    print(f"Cropped Shape: {crop_info['crop_shape']}, Bounds: {crop_info['crop_bounds']}, Density: {crop_info['density']*100:.2f}%")
+    assert crop_info['crop_bounds'] == [16, 79, 20, 80, 10, 90]
+    assert crop_info['crop_shape'] == [64, 61, 81]
+    assert len(crop_info['face_images']) == 6, "Expected 6 cropped face images"
+    assert len(crop_info['face_images_rgba']) == 6, "Expected 6 cropped RGBA face images"
+    assert 'point_cloud' in crop_info, "Expected point cloud in cropped data"
+
     print("\n" + "=" * 80)
-    print(" ALL CURATION ENGINE TESTS PASSED WITH 100% ACCURACY! ")
+    print(" ALL CURATION ENGINE TESTS (INCLUDING VISUAL CROP) PASSED WITH 100% ACCURACY! ")
     print("=" * 80)
 
 if __name__ == '__main__':

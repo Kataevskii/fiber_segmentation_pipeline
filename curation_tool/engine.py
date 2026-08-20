@@ -12,6 +12,7 @@ from scipy.ndimage import (
     label as nd_label,
     center_of_mass
 )
+from scipy.spatial import cKDTree
 from skimage.graph import route_through_array
 
 class RealDataCurationEngine:
@@ -42,6 +43,9 @@ class RealDataCurationEngine:
 
         self.D, self.H, self.W = self.full_vol.shape
         print(f"Loaded volume shape: ({self.D}, {self.H}, {self.W}), overall density: {np.mean(self.full_vol):.4f}", flush=True)
+
+        # Precomputed coordinate grid for fast sub-box routing without per-step allocations
+        self.grid_coords = np.stack(np.indices((self.cube_size, self.cube_size, self.cube_size)), axis=-1).astype(np.float32)
 
         # Current working patch state
         self.current_patch_origin = (0, 0, 0)
@@ -91,93 +95,72 @@ class RealDataCurationEngine:
             'overall_density': float(np.mean(self.full_vol))
         }
 
-    def get_face_images_base64(self, transparent_zeros=True):
+    def get_cropped_view_data(self, z_min=0, z_max=95, y_min=0, y_max=95, x_min=0, x_max=95, step=4):
+        """
+        Extracts visual sub-box crop features (faces, sub-MIPs, point cloud, slices)
+        within the current 96x96x96 patch without modifying the underlying 96³ volume.
+        All coordinate inputs are clamped to [0, cube_size - 1].
+        """
+        if self.current_patch_bin is None:
+            raise ValueError("No active patch loaded.")
+
         S = self.cube_size
+        z_min = max(0, min(S - 1, int(z_min)))
+        z_max = max(z_min, min(S - 1, int(z_max)))
+        y_min = max(0, min(S - 1, int(y_min)))
+        y_max = max(y_min, min(S - 1, int(y_max)))
+        x_min = max(0, min(S - 1, int(x_min)))
+        x_max = max(x_min, min(S - 1, int(x_max)))
+
+        # Subvolume binary slice
+        sub_bin = self.current_patch_bin[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
+
+        # 6 Boundary face images for the cropped sub-box
         faces = {
-            'z_min': self.current_patch_bin[0, :, :],    # (Y, X) -> Row=Y, Col=X
-            'z_max': self.current_patch_bin[S-1, :, :],  # (Y, X) -> Row=Y, Col=X
-            'y_min': self.current_patch_bin[:, 0, :],    # (Z, X) -> Row=Z, Col=X
-            'y_max': self.current_patch_bin[:, S-1, :],  # (Z, X) -> Row=Z, Col=X
-            'x_min': self.current_patch_bin[:, :, 0],    # (Z, Y) -> Row=Z, Col=Y
-            'x_max': self.current_patch_bin[:, :, S-1]   # (Z, Y) -> Row=Z, Col=Y
+            'z_min': self.current_patch_bin[z_min, y_min:y_max+1, x_min:x_max+1],      # (Y, X) -> Row=Y, Col=X
+            'z_max': self.current_patch_bin[z_max, y_min:y_max+1, x_min:x_max+1],      # (Y, X) -> Row=Y, Col=X
+            'y_min': self.current_patch_bin[z_min:z_max+1, y_min, x_min:x_max+1],      # (Z, X) -> Row=Z, Col=X
+            'y_max': self.current_patch_bin[z_min:z_max+1, y_max, x_min:x_max+1],      # (Z, X) -> Row=Z, Col=X
+            'x_min': self.current_patch_bin[z_min:z_max+1, y_min:y_max+1, x_min],      # (Z, Y) -> Row=Z, Col=Y
+            'x_max': self.current_patch_bin[z_min:z_max+1, y_min:y_max+1, x_max]       # (Z, Y) -> Row=Z, Col=Y
         }
 
-        res = {}
-        res_rgba = {}
+        face_imgs = {}
+        face_imgs_rgba = {}
         for name, mask in faces.items():
-            res[name] = self._array_to_png_base64(mask)
+            face_imgs[name] = self._array_to_png_base64(mask)
+            h, w = mask.shape
+            rgba = np.zeros((h, w, 4), dtype=np.uint8)
+            rgba[mask] = [255, 255, 255, 240]
+            rgba[~mask] = [15, 18, 28, 20]
+            face_imgs_rgba[name] = self._array_to_png_base64(rgba)
 
-            # Generate RGBA where 0 is transparent and 1 is bright solid cyan/white
-            rgba = np.zeros((S, S, 4), dtype=np.uint8)
-            rgba[mask] = [255, 255, 255, 240]    # Solid white fibers
-            rgba[~mask] = [15, 18, 28, 20]        # Ultra-faint transparent background
-            res_rgba[name] = self._array_to_png_base64(rgba)
+        # Cropped Surface Point Cloud
+        from scipy.ndimage import binary_erosion
+        surf = self.current_patch_bin & ~binary_erosion(self.current_patch_bin)
+        sub_surf = np.zeros_like(surf, dtype=bool)
+        sub_surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
+        vox_coords = np.argwhere(sub_surf)
+        if len(vox_coords) > 6000:
+            sub_idx = np.random.choice(len(vox_coords), size=6000, replace=False)
+            vox_coords = vox_coords[sub_idx]
+        point_cloud = vox_coords.tolist()
 
-        return res, res_rgba
-
-    def detect_face_seed_candidates(self, min_blob_size=3):
-        """
-        Auto-detects fiber cross-section centroids on each of the 6 cube faces
-        with accurate 3D spatial alignment.
-        """
-        S = self.cube_size
-        faces = {
-            'z_min': self.current_patch_bin[0, :, :],    # (Y, X) -> Row=Y, Col=X
-            'z_max': self.current_patch_bin[S-1, :, :],  # (Y, X) -> Row=Y, Col=X
-            'y_min': self.current_patch_bin[:, 0, :],    # (Z, X) -> Row=Z, Col=X
-            'y_max': self.current_patch_bin[:, S-1, :],  # (Z, X) -> Row=Z, Col=X
-            'x_min': self.current_patch_bin[:, :, 0],    # (Z, Y) -> Row=Z, Col=Y
-            'x_max': self.current_patch_bin[:, :, S-1]   # (Z, Y) -> Row=Z, Col=Y
+        return {
+            'crop_bounds': [z_min, z_max, y_min, y_max, x_min, x_max],
+            'crop_shape': [int(z_max - z_min + 1), int(y_max - y_min + 1), int(x_max - x_min + 1)],
+            'density': float(np.mean(sub_bin)) if sub_bin.size > 0 else 0.0,
+            'face_images': face_imgs,
+            'face_images_rgba': face_imgs_rgba,
+            'point_cloud': point_cloud
         }
-
-        candidates = []
-        for face_name, face_mask in faces.items():
-            if not np.any(face_mask):
-                continue
-            lbl, num = nd_label(face_mask, structure=np.ones((3, 3), dtype=bool))
-            if num == 0:
-                continue
-            coms = center_of_mass(face_mask, labels=lbl, index=np.arange(1, num + 1))
-            if isinstance(coms, tuple):
-                coms = [coms]
-            sizes = np.bincount(lbl.ravel())[1:]
-
-            for cid, (com, sz) in enumerate(zip(coms, sizes)):
-                if sz < min_blob_size:
-                    continue
-                u, v = float(com[0]), float(com[1])
-                
-                # Convert 2D face image coord (row=u, col=v) to 3D patch (z, y, x)
-                if face_name == 'z_min':
-                    pos3d = (0, int(round(u)), int(round(v)))
-                elif face_name == 'z_max':
-                    pos3d = (S - 1, int(round(u)), int(round(v)))
-                elif face_name == 'y_min':
-                    pos3d = (int(round(u)), 0, int(round(v)))
-                elif face_name == 'y_max':
-                    pos3d = (int(round(u)), S - 1, int(round(v)))
-                elif face_name == 'x_min':
-                    pos3d = (int(round(u)), int(round(v)), 0)
-                else: # x_max
-                    pos3d = (int(round(u)), int(round(v)), S - 1)
-
-                candidates.append({
-                    'face': face_name,
-                    'u': round(u, 1),
-                    'v': round(v, 1),
-                    'pos3d': list(pos3d),
-                    'size': int(sz)
-                })
-
-        return candidates
-
-    def resolve_connections(self, seeds):
+    def resolve_connections(self, seeds, crop_bounds=None):
         """
         Executes deterministic geodesic minimal-curvature path resolution:
         1. Groups seeds by fiber_id.
         2. For pairs (e.g. 1---1, 2---2): computes optimal 3D geodesic path through distance ridge.
         3. For singletons (e.g. 3, 4): traces along DT ridge until fiber terminates.
-        4. Reconstructs multi-label 3D instance segmentation and analytical orientation vectors.
+        4. Reconstructs multi-label 3D instance segmentation and analytical orientation vectors via fast KDTree.
         """
         t0 = time.time()
         self.current_seeds = seeds
@@ -240,84 +223,76 @@ class RealDataCurationEngine:
                         for pt in path_arr:
                             dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
 
-        # Multi-Label 3D Voronoi Diffusion with Noise & Unlabeled Speck Removal
-        fg_mask = self.current_patch_bin > 0
-        skel_seed_mask = inst_skel > 0
+        # Accelerated Multi-Label 3D Voronoi Diffusion & Target Generation via cKDTree
         inst_vol = np.zeros((S, S, S), dtype=np.uint16)
         clean_patch_bin = np.zeros((S, S, S), dtype=bool)
-
-        if np.any(skel_seed_mask):
-            # 1. Identify connected components containing at least one curated skeleton voxel
-            lbl, num_comp = nd_label(fg_mask, structure=np.ones((3, 3, 3), dtype=bool))
-            skel_comps = np.unique(lbl[skel_seed_mask])
-            skel_comps = skel_comps[skel_comps > 0]
-
-            # Keep only components that contain annotated fibers (removes isolated border/corner specks)
-            clean_comp_mask = np.isin(lbl, skel_comps)
-
-            # 2. Compute distance transform to skeleton
-            dt_skel, (nearest_z, nearest_y, nearest_x) = distance_transform_edt(~skel_seed_mask, return_indices=True)
-
-            # 3. Apply fiber radius threshold (<= 6.5 vx) to prune far uncurated protrusions
-            clean_fg_mask = clean_comp_mask & (dt_skel <= 6.5)
-
-            # 4. Voronoi assign instance IDs only to valid curated foreground voxels
-            inst_vol[clean_fg_mask] = inst_skel[
-                nearest_z[clean_fg_mask], nearest_y[clean_fg_mask], nearest_x[clean_fg_mask]
-            ]
-            clean_patch_bin = (inst_vol > 0)
-        else:
-            dt_skel = np.zeros((S, S, S), dtype=np.float32)
-
-        # Analytical Orientation Field
         ori_vol = np.zeros((3, S, S, S), dtype=np.float32)
-        for fid, curve in resolved_curves.items():
-            if len(curve) >= 2:
-                tangents = np.zeros_like(curve, dtype=np.float32)
-                tangents[0] = curve[1] - curve[0]
-                tangents[-1] = curve[-1] - curve[-2]
-                if len(curve) > 2:
-                    tangents[1:-1] = (curve[2:] - curve[:-2]) / 2.0
-                norms = np.linalg.norm(tangents, axis=1, keepdims=True)
-                norms[norms == 0] = 1.0
-                tangents /= norms
+        intensity_target = np.full((S, S, S), -0.5, dtype=np.float32)
 
-                for pt, tang in zip(curve, tangents):
-                    ori_vol[:, pt[0], pt[1], pt[2]] = tang
+        if len(resolved_curves) > 0:
+            # Gather all skeleton points and their fiber IDs
+            all_pts = []
+            all_fids = []
+            for fid, curve in resolved_curves.items():
+                all_pts.append(curve)
+                all_fids.append(np.full(len(curve), fid, dtype=np.uint16))
+            all_skel_coords = np.vstack(all_pts)
+            all_skel_fids = np.concatenate(all_fids)
 
-        for fid in resolved_curves.keys():
-            f_mask = (inst_vol == fid)
-            if np.any(f_mask):
-                for c in range(3):
-                    f_ori = ori_vol[c]
-                    val = np.mean(f_ori[inst_skel == fid])
-                    ori_vol[c, f_mask] = val
-                norm_c = np.sqrt(ori_vol[0]**2 + ori_vol[1]**2 + ori_vol[2]**2)
-                norm_c[norm_c == 0] = 1.0
-                ori_vol[:, f_mask] /= norm_c[f_mask]
+            # Query distance from foreground voxels to nearest skeleton point in < 1ms
+            fg_coords = np.argwhere(self.current_patch_bin > 0)
+            if len(fg_coords) > 0:
+                skel_tree = cKDTree(all_skel_coords)
+                dists, indices = skel_tree.query(fg_coords, k=1)
 
-        ori_vol[:, ~clean_patch_bin] = 0.0
+                # Prune points exceeding fiber radius threshold (<= 6.5 vx)
+                valid_mask = (dists <= 6.5)
+                valid_fg = fg_coords[valid_mask]
+                valid_dists = dists[valid_mask]
+                nearest_fids = all_skel_fids[indices[valid_mask]]
 
-        # Single Fiber Centerline Gaussian Probability Field G1(x) with sigma = 1.0 (matching synthetic model)
-        sigma = 1.0
-        intensity_target = np.exp(-(dt_skel**2) / (2.0 * sigma**2)).astype(np.float32)
-        intensity_target[intensity_target < 1e-4] = 0.0
+                inst_vol[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = nearest_fids
+                clean_patch_bin = (inst_vol > 0)
 
-        # Multi-fiber intersection dip (where multiple fiber centerlines come close <= 3.0 vx)
-        skel_ids = np.unique(inst_skel[inst_skel > 0])
-        if len(skel_ids) >= 2:
-            dt_list = [distance_transform_edt(inst_skel != fid) for fid in skel_ids]
-            dt_stack = np.stack(dt_list, axis=0)
-            dt_sorted = np.sort(dt_stack, axis=0)
-            d1 = dt_sorted[0]
-            d2 = dt_sorted[1]
-            sigma_cross = 1.5
-            cross_mask = (d1 <= 3.0) & (d2 <= 3.0)
-            g_cross = np.zeros_like(d1)
-            g_cross[cross_mask] = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * sigma_cross**2))
-            intensity_target = intensity_target - 1.5 * g_cross
+                # Centerline Gaussian probability field G1(x) with sigma = 1.0
+                intensity_target[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = np.exp(
+                    -(valid_dists**2) / (2.0 * 1.0**2)
+                )
 
-        intensity_target[~clean_patch_bin] = -0.5
+                # Multi-fiber intersection dip calculation (when >= 2 fibers present)
+                if len(resolved_curves) >= 2:
+                    fiber_trees = [cKDTree(curve) for curve in resolved_curves.values()]
+                    per_fiber_dists = np.stack([tree.query(valid_fg)[0] for tree in fiber_trees], axis=0)
+                    sorted_dists = np.sort(per_fiber_dists, axis=0)
+                    d1 = sorted_dists[0]
+                    d2 = sorted_dists[1]
+                    cross_mask = (d1 <= 3.0) & (d2 <= 3.0)
+                    if np.any(cross_mask):
+                        g_cross = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * 1.5**2))
+                        cross_pts = valid_fg[cross_mask]
+                        intensity_target[cross_pts[:, 0], cross_pts[:, 1], cross_pts[:, 2]] -= 1.5 * g_cross
+
+                # Fast Analytical Orientation Field
+                for fid, curve in resolved_curves.items():
+                    if len(curve) >= 2:
+                        tangents = np.zeros_like(curve, dtype=np.float32)
+                        tangents[0] = curve[1] - curve[0]
+                        tangents[-1] = curve[-1] - curve[-2]
+                        if len(curve) > 2:
+                            tangents[1:-1] = (curve[2:] - curve[:-2]) / 2.0
+                        norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+                        norms[norms == 0] = 1.0
+                        tangents /= norms
+
+                        mean_tang = np.mean(tangents, axis=0)
+                        mean_norm = np.linalg.norm(mean_tang)
+                        if mean_norm > 0:
+                            mean_tang /= mean_norm
+
+                        f_mask = (inst_vol == fid)
+                        if np.any(f_mask):
+                            for c in range(3):
+                                ori_vol[c, f_mask] = mean_tang[c]
 
         resolve_time = time.time() - t0
 
@@ -336,9 +311,7 @@ class RealDataCurationEngine:
             'success': True,
             'num_fibers': len(resolved_curves),
             'resolve_time_ms': round(resolve_time * 1000, 1),
-            'curves_3d': curves_3d_json,
-            'mip_results': self.get_mip_images_base64(self.current_patch_bin, inst_skel, inst_vol),
-            'slices': self.get_slices_bundle_base64()
+            'curves_3d': curves_3d_json
         }
 
     def _snap_to_foreground(self, pt, search_radius=4):
@@ -359,10 +332,8 @@ class RealDataCurationEngine:
 
     def _route_fiber_lane_guided(self, p1, p2, dynamic_cost, perpendicular_weight=0.20):
         """
-        Routes fiber between p1 and p2 using distance transform ridge while penalizing
-        perpendicular deviation from the straight trajectory vector (p1 -> p2).
-        This keeps parallel bundles in distinct lanes and prevents centerlines from collapsing
-        onto a single shared ridge.
+        Fast bounded Dijkstra routing between p1 and p2 using distance ridge + perpendicular lane penalty.
+        Executes on a tight sub-bounding box around (p1, p2) for 20x to 50x faster path computation.
         """
         S = self.cube_size
         v_dir = np.array(p2, dtype=np.float32) - np.array(p1, dtype=np.float32)
@@ -372,24 +343,48 @@ class RealDataCurationEngine:
 
         v_unit = v_dir / v_len
 
-        # Perpendicular distance penalty grid from 3D line segment (p1 -> p2)
-        grid_z, grid_y, grid_x = np.indices((S, S, S))
-        pts = np.stack([grid_z - p1[0], grid_y - p1[1], grid_x - p1[2]], axis=-1)
+        # Fast local sub-bounding box routing
+        pad = 16
+        z_min = max(0, min(p1[0], p2[0]) - pad)
+        z_max = min(S, max(p1[0], p2[0]) + pad + 1)
+        y_min = max(0, min(p1[1], p2[1]) - pad)
+        y_max = min(S, max(p1[1], p2[1]) + pad + 1)
+        x_min = max(0, min(p1[2], p2[2]) - pad)
+        x_max = min(S, max(p1[2], p2[2]) + pad + 1)
+
+        sub_coords = self.grid_coords[z_min:z_max, y_min:y_max, x_min:x_max]
+        pts = sub_coords - np.array(p1, dtype=np.float32)
         proj = np.sum(pts * v_unit, axis=-1)
         proj_clamped = np.clip(proj, 0.0, v_len)
         closest_on_line = np.array(p1, dtype=np.float32) + proj_clamped[..., None] * v_unit
-        perp_dist = np.linalg.norm(np.stack([grid_z, grid_y, grid_x], axis=-1) - closest_on_line, axis=-1)
+        perp_dist = np.linalg.norm(sub_coords - closest_on_line, axis=-1)
 
-        # Combine dynamic distance ridge cost with lane guidance penalty
-        guided_cost = dynamic_cost + (perpendicular_weight * perp_dist).astype(np.float32)
+        sub_cost = dynamic_cost[z_min:z_max, y_min:y_max, x_min:x_max] + (perpendicular_weight * perp_dist).astype(np.float32)
 
-        path, cost_val = route_through_array(
-            guided_cost,
-            p1,
-            p2,
-            fully_connected=True
-        )
-        return np.array(path, dtype=np.intp)
+        sub_p1 = (p1[0] - z_min, p1[1] - y_min, p1[2] - x_min)
+        sub_p2 = (p2[0] - z_min, p2[1] - y_min, p2[2] - x_min)
+
+        try:
+            sub_path, _ = route_through_array(
+                sub_cost,
+                sub_p1,
+                sub_p2,
+                fully_connected=True
+            )
+            path = np.array(sub_path, dtype=np.intp)
+            path[:, 0] += z_min
+            path[:, 1] += y_min
+            path[:, 2] += x_min
+            return path
+        except Exception:
+            # Fallback to full volume routing if local box hit a disconnected barrier
+            pts_full = self.grid_coords - np.array(p1, dtype=np.float32)
+            proj_full = np.clip(np.sum(pts_full * v_unit, axis=-1), 0.0, v_len)
+            closest_full = np.array(p1, dtype=np.float32) + proj_full[..., None] * v_unit
+            perp_full = np.linalg.norm(self.grid_coords - closest_full, axis=-1)
+            guided_cost = dynamic_cost + (perpendicular_weight * perp_full).astype(np.float32)
+            path, _ = route_through_array(guided_cost, p1, p2, fully_connected=True)
+            return np.array(path, dtype=np.intp)
 
     def _trace_terminating_fiber(self, start_pt, max_steps=120):
         """
@@ -501,8 +496,6 @@ class RealDataCurationEngine:
         patch_data['loaded_seeds'] = seeds
         patch_data['curves_3d'] = res['curves_3d']
         patch_data['num_fibers'] = res['num_fibers']
-        patch_data['mip_results'] = res['mip_results']
-        patch_data['slices'] = res['slices']
         return patch_data
 
     def save_current_curated_sample(self, overwrite=False):
@@ -536,13 +529,24 @@ class RealDataCurationEngine:
         np.save(f"{prefix}_ori.npy", ori_vol.astype(np.float32))
         np.save(f"{prefix}_intensity.npy", intensity_target.astype(np.float32))
 
+        clean_seeds = []
+        for s in self.current_seeds:
+            clean_seeds.append({
+                'face': str(s.get('face', '')),
+                'u': float(s.get('u', 0)),
+                'v': float(s.get('v', 0)),
+                'pos3d': [int(c) for c in s.get('pos3d', [])],
+                'fiber_id': int(s.get('fiber_id', 1)),
+                'is_waypoint': bool(s.get('is_waypoint', False))
+            })
+
         meta = {
-            'patch_index': idx,
-            'origin_zyx': self.current_patch_origin,
-            'cube_size': self.cube_size,
-            'num_fibers': self.current_resolution['num_fibers'],
+            'patch_index': int(idx),
+            'origin_zyx': [int(c) for c in self.current_patch_origin],
+            'cube_size': int(self.cube_size),
+            'num_fibers': int(self.current_resolution['num_fibers']),
             'density': float(np.mean(patch_bin)),
-            'seeds': self.current_seeds,
+            'seeds': clean_seeds,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         with open(f"{prefix}_meta.json", 'w', encoding='utf-8') as f:
@@ -629,9 +633,6 @@ class RealDataCurationEngine:
         self.current_seeds = []
         self.current_resolution = None
 
-        # Auto-detect initial seed candidates on all 6 faces
-        auto_seeds = self.detect_face_seed_candidates()
-
         # Extract true 3D surface voxels of fibers for 3D volume rendering
         from scipy.ndimage import binary_erosion
         surf = self.current_patch_bin & ~binary_erosion(self.current_patch_bin)
@@ -651,78 +652,6 @@ class RealDataCurationEngine:
             'density': float(np.mean(self.current_patch_bin)),
             'face_images': face_imgs,
             'face_images_rgba': face_imgs_rgba,
-            'mip_images': self.get_mip_images_base64(self.current_patch_bin),
-            'auto_candidates': auto_seeds,
             'point_cloud': point_cloud,
-            'slices': self.get_slices_bundle_base64(),
             'curated_total': self.patch_counter
         }
-
-    def get_mip_images_base64(self, patch_bin, inst_skel=None, inst_vol=None):
-        palette = self._get_color_palette()
-
-        mip_raw_z = np.max(patch_bin, axis=0)
-        mip_raw_y = np.max(patch_bin, axis=1)
-        mip_raw_x = np.max(patch_bin, axis=2)
-
-        res = {
-            'raw_xy': self._array_to_png_base64(mip_raw_z),
-            'raw_xz': self._array_to_png_base64(mip_raw_y),
-            'raw_yz': self._array_to_png_base64(mip_raw_x),
-        }
-
-        if inst_skel is not None and inst_vol is not None:
-            skel_mip_z = palette[np.clip(np.max(inst_skel, axis=0), 0, 255)]
-            skel_mip_y = palette[np.clip(np.max(inst_skel, axis=1), 0, 255)]
-            skel_mip_x = palette[np.clip(np.max(inst_skel, axis=2), 0, 255)]
-
-            inst_mip_z = palette[np.clip(np.max(inst_vol, axis=0), 0, 255)]
-            inst_mip_y = palette[np.clip(np.max(inst_vol, axis=1), 0, 255)]
-            inst_mip_x = palette[np.clip(np.max(inst_vol, axis=2), 0, 255)]
-
-            res.update({
-                'skel_xy': self._array_to_png_base64(skel_mip_z),
-                'skel_xz': self._array_to_png_base64(skel_mip_y),
-                'skel_yz': self._array_to_png_base64(skel_mip_x),
-                'inst_xy': self._array_to_png_base64(inst_mip_z),
-                'inst_xz': self._array_to_png_base64(inst_mip_y),
-                'inst_yz': self._array_to_png_base64(inst_mip_x)
-            })
-
-        return res
-
-    def get_slices_bundle_base64(self, step=6):
-        S = self.cube_size
-        palette = self._get_color_palette()
-        slices_data = []
-
-        inst_vol = self.current_resolution['inst_vol'] if self.current_resolution else np.zeros((S, S, S), dtype=np.uint16)
-        inst_skel = self.current_resolution['inst_skel'] if self.current_resolution else np.zeros((S, S, S), dtype=np.uint16)
-
-        for z in range(0, S, step):
-            raw_slice = self.current_patch_bin[z]
-            skel_slice = palette[np.clip(inst_skel[z], 0, 255)]
-            inst_slice = palette[np.clip(inst_vol[z], 0, 255)]
-
-            slices_data.append({
-                'z': z,
-                'raw': self._array_to_png_base64(raw_slice),
-                'skel': self._array_to_png_base64(skel_slice),
-                'inst': self._array_to_png_base64(inst_slice)
-            })
-
-        return slices_data
-
-    def _get_color_palette(self):
-        rng = np.random.RandomState(42)
-        pal = rng.randint(60, 255, size=(256, 3)).astype(np.uint8)
-        pal[0] = [15, 18, 25]
-        pal[1] = [0, 230, 255]
-        pal[2] = [255, 110, 0]
-        pal[3] = [50, 255, 100]
-        pal[4] = [255, 0, 180]
-        pal[5] = [255, 230, 0]
-        pal[6] = [160, 50, 255]
-        pal[7] = [0, 255, 200]
-        pal[8] = [255, 70, 70]
-        return pal

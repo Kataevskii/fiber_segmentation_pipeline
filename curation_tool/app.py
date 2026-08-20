@@ -284,13 +284,13 @@ HTML_TEMPLATE = """
             box-shadow: 0 0 10px rgba(0, 230, 118, 0.4);
         }
 
-        /* Workspace Layout - Balanced 55% / 45% Split */
+        /* Workspace Layout - 60% Left Stage / 40% Right Controls Proportional Split */
         .workspace {
             display: grid;
-            grid-template-columns: minmax(480px, 1.18fr) minmax(400px, 0.82fr);
+            grid-template-columns: minmax(480px, 6fr) minmax(360px, 4fr);
             height: calc(100vh - 54px);
-            gap: 10px;
-            padding: 8px 10px;
+            gap: 14px;
+            padding: 10px 14px;
             overflow: hidden;
             min-height: 0;
             min-width: 0;
@@ -549,17 +549,15 @@ HTML_TEMPLATE = """
             color: var(--accent-cyan);
         }
 
-        /* Bottom Floating Seeds Dock */
+        /* Placed Fiber Seeds Card in Right Panel */
         .seeds-dock {
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
             border-radius: 8px;
-            padding: 8px 12px;
+            padding: 10px 12px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
-            max-height: 130px;
-            overflow-y: auto;
+            gap: 8px;
             flex-shrink: 0;
         }
 
@@ -567,28 +565,39 @@ HTML_TEMPLATE = """
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            text-transform: uppercase;
         }
 
         .seeds-chip-container {
             display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
+            flex-direction: column;
+            gap: 5px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 4px;
         }
 
         .fiber-chip {
             background: var(--bg-surface-raised);
             border: 1px solid var(--border-subtle);
             border-radius: 5px;
-            padding: 3px 8px;
+            padding: 4px 8px;
             display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: 6px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 11px;
+            transition: all 0.15s ease;
+        }
+
+        .fiber-chip:hover {
+            border-color: var(--border-medium);
+        }
+
+        .chip-left-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
 
         .chip-color-dot {
@@ -631,44 +640,45 @@ HTML_TEMPLATE = """
         .waypoint-card {
             background: var(--bg-card);
             border: 1px solid var(--border-accent);
-            border-radius: 6px;
-            padding: 8px 10px;
+            border-radius: 8px;
+            padding: 10px 12px;
             display: flex;
             flex-direction: column;
             gap: 8px;
         }
 
         .waypoint-row {
-            display: flex;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr) 1.5fr;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
         }
 
         .coord-input-group {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 4px;
             background: var(--bg-surface-raised);
             border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            padding: 3px 6px;
+            border-radius: 5px;
+            padding: 4px 6px;
         }
 
         .coord-label {
             font-family: 'JetBrains Mono', monospace;
             font-size: 11px;
-            font-weight: bold;
+            font-weight: 700;
             color: var(--accent-cyan);
         }
 
         .coord-num-input {
-            width: 44px;
+            width: 36px;
             background: transparent;
             border: none;
             color: var(--text-primary);
             font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             text-align: center;
             outline: none;
@@ -678,15 +688,17 @@ HTML_TEMPLATE = """
             background: linear-gradient(135deg, #00e5ff 0%, #00b0ff 100%);
             color: #051016;
             border: none;
-            border-radius: 4px;
+            border-radius: 5px;
             padding: 5px 10px;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 600;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 4px;
+            justify-content: center;
+            gap: 5px;
             transition: all 0.15s ease;
+            white-space: nowrap;
         }
 
         .btn-insert-waypoint:hover {
@@ -694,29 +706,12 @@ HTML_TEMPLATE = """
             transform: translateY(-1px);
         }
 
-        .btn-slice-pick {
-            background: var(--bg-surface-raised);
-            color: var(--text-primary);
-            border: 1px solid var(--border-accent);
-            border-radius: 4px;
-            padding: 5px 8px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-
-        .btn-slice-pick:hover {
-            border-color: var(--accent-cyan);
-            color: var(--accent-cyan);
-        }
-
         .chip-wp-tag {
             background: rgba(0, 229, 255, 0.15);
             border: 1px dashed var(--accent-cyan);
             color: var(--accent-cyan);
-            border-radius: 3px;
-            padding: 1px 4px;
+            border-radius: 4px;
+            padding: 1px 5px;
             font-size: 10px;
             font-family: 'JetBrains Mono', monospace;
             display: inline-flex;
@@ -724,103 +719,154 @@ HTML_TEMPLATE = """
             gap: 3px;
         }
 
-        /* Right Panel: MIPs & Slice Viewer */
+        /* Right Panel: Controls & Crop ROI */
         .preview-panel {
             background: var(--bg-surface);
-            padding: 12px;
+            padding: 10px 12px;
             display: flex;
             flex-direction: column;
             gap: 10px;
             overflow-y: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
         }
 
         .panel-title {
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             color: var(--text-secondary);
         }
 
-        .mip-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-        }
-
-        .mip-card {
+        .info-card {
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
-            border-radius: 6px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .mip-header {
-            padding: 3px 6px;
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--text-secondary);
-            background: var(--bg-surface-raised);
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-        .mip-img {
-            width: 100%;
-            aspect-ratio: 1 / 1;
-            image-rendering: pixelated;
-            background: #000;
-        }
-
-        .slice-section {
-            background: var(--bg-card);
-            border: 1px solid var(--border-subtle);
-            border-radius: 6px;
-            padding: 8px 10px;
+            border-radius: 8px;
+            padding: 10px 12px;
             display: flex;
             flex-direction: column;
             gap: 6px;
         }
 
-        .slice-controls {
+        .info-row {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 1px 0;
         }
 
-        .slice-slider {
-            flex: 1;
+        .info-label {
+            color: var(--text-secondary);
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Visual Sub-Box Crop Tool Card */
+        .crop-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-accent);
+            border-radius: 8px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .crop-card.active {
+            border-color: rgba(0, 229, 255, 0.45);
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.12);
+        }
+
+        .crop-row {
+            display: grid;
+            grid-template-columns: 20px 38px 1fr 1fr 38px 38px;
+            align-items: center;
+            gap: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }
+
+        .crop-axis-label {
+            font-weight: 700;
+            font-size: 11px;
+            color: var(--accent-cyan);
+            text-align: center;
+        }
+
+        .crop-range-slider {
+            width: 100%;
+            height: 5px;
             accent-color: var(--accent-cyan);
             cursor: pointer;
         }
 
-        .slice-views-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 6px;
-        }
-
-        .slice-view-box {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 2px;
-        }
-
-        .slice-label {
-            font-size: 10px;
-            font-weight: 500;
-            color: var(--text-secondary);
-        }
-
-        .slice-img {
-            width: 100%;
-            aspect-ratio: 1 / 1;
-            image-rendering: pixelated;
-            border-radius: 4px;
-            background: #000;
+        .crop-num-input {
+            width: 38px;
+            background: var(--bg-surface-raised);
             border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            text-align: center;
+            padding: 2px 0;
+            outline: none;
+            -moz-appearance: textfield;
+        }
+
+        .crop-num-input::-webkit-outer-spin-button,
+        .crop-num-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .crop-num-input:focus {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .crop-presets-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .btn-crop-action {
+            flex: 1 1 auto;
+            text-align: center;
+            background: var(--bg-surface-raised);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-crop-action:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            background: rgba(0, 229, 255, 0.08);
+        }
+
+        .btn-crop-action.highlight {
+            background: rgba(0, 229, 255, 0.15);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            font-weight: 700;
         }
 
         .shortcuts-hint {
@@ -891,9 +937,6 @@ HTML_TEMPLATE = """
             <button class="btn-secondary" onclick="fetchNewRandomPatch()" title="Hotkey: R">
                 🎲 Random Cube [R]
             </button>
-            <button class="btn-secondary" onclick="autoPopulateCandidates()" title="Auto-detect candidate seeds">
-                ✨ Auto-Detect
-            </button>
             <button class="btn-secondary" onclick="clearAllSeeds()" title="Clear all seeds">
                 🗑️ Clear
             </button>
@@ -920,6 +963,10 @@ HTML_TEMPLATE = """
                     <label class="toggle-pill" title="3D collagen point cloud">
                         <input type="checkbox" id="chk-pointcloud" checked onchange="togglePointCloud(this.checked)">
                         <span>3D Points</span>
+                    </label>
+                    <label class="toggle-pill highlight" id="crop-stage-toggle" title="Toggle visual sub-box crop ROI (Hotkey: C)">
+                        <input type="checkbox" id="chk-crop-toggle" onchange="toggleCropEnabled(this.checked)">
+                        <span>✂️ Crop ROI</span>
                     </label>
                 </div>
 
@@ -951,46 +998,83 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Bottom Floating Seeds Dock -->
-            <div class="seeds-dock">
-                <div class="dock-header">
-                    <span>Placed Fiber Seeds & Pairing Status</span>
-                    <span id="seeds-count-tag" style="color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;">0 Seeds</span>
-                </div>
-                <div class="seeds-chip-container" id="seeds-chip-container">
-                    <div style="color: var(--text-muted); font-size: 11px;">No seeds placed. Click on 3D Box faces or click Auto-Detect!</div>
-                </div>
-            </div>
-
             <div class="shortcuts-hint">
                 <span><kbd>Click 3D Face</kbd> Drop Seed</span>
                 <span><kbd>Space</kbd> Resolve</span>
                 <span><kbd>Enter</kbd> Save & Next</span>
                 <span><kbd>R</kbd> Random Cube</span>
-                <span><kbd>[ / ]</kbd> Prev/Next Fiber ID</span>
+                <span><kbd>F</kbd> Focus Active Fiber Crop</span>
+                <span><kbd>C</kbd> Toggle Crop</span>
+                <span><kbd>[ / ]</kbd> Prev/Next ID</span>
             </div>
         </div>
 
-        <!-- Right: 3D MIPs & Orthogonal Slice Scrubber -->
+        <!-- Right: Controls, Crop ROI, & 3D Midpoint Tool -->
         <div class="preview-panel">
             <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
-                <div class="panel-title">Projections & Multi-Label Output</div>
+                <div class="panel-title">Controls & Sub-Box ROI</div>
                 <div class="badge highlight" id="perf-badge">Zero-Model Geodesic Engine</div>
             </div>
 
-            <!-- 3-Axis MIP Views -->
-            <div class="mip-grid">
-                <div class="mip-card">
-                    <div class="mip-header">Top MIP (XY)</div>
-                    <img id="mip-xy" class="mip-img" src="" alt="MIP XY">
+            <!-- Visual Sub-Box Crop Tool Card -->
+            <div class="crop-card" id="crop-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="panel-title" style="display: flex; align-items: center; gap: 6px;">
+                        <span>✂️ Visual Sub-Box Crop (ROI)</span>
+                        <label class="toggle-pill highlight" style="padding: 1px 6px; font-size: 10px; cursor: pointer;">
+                            <input type="checkbox" id="chk-crop-active" onchange="toggleCropEnabled(this.checked)">
+                            <span>Active</span>
+                        </label>
+                    </div>
+                    <span id="crop-stats-badge" class="badge">Full: 96³ (100%)</span>
                 </div>
-                <div class="mip-card">
-                    <div class="mip-header">Front MIP (XZ)</div>
-                    <img id="mip-xz" class="mip-img" src="" alt="MIP XZ">
+
+                <!-- 3-Axis Sliders -->
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <!-- Z Axis (Depth) -->
+                    <div class="crop-row">
+                        <span class="crop-axis-label">Z:</span>
+                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min (Depth start)">
+                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('z', 'min', this.value)" title="Z Min">
+                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('z', 'max', this.value)" title="Z Max">
+                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max (Depth end)">
+                        <span id="crop-z-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
+                    </div>
+
+                    <!-- Y Axis (Height) -->
+                    <div class="crop-row">
+                        <span class="crop-axis-label">Y:</span>
+                        <input type="number" id="crop-y-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min (Height start)">
+                        <input type="range" id="crop-y-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('y', 'min', this.value)" title="Y Min">
+                        <input type="range" id="crop-y-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('y', 'max', this.value)" title="Y Max">
+                        <input type="number" id="crop-y-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max (Height end)">
+                        <span id="crop-y-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
+                    </div>
+
+                    <!-- X Axis (Width) -->
+                    <div class="crop-row">
+                        <span class="crop-axis-label">X:</span>
+                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min (Width start)">
+                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('x', 'min', this.value)" title="X Min">
+                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('x', 'max', this.value)" title="X Max">
+                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max (Width end)">
+                        <span id="crop-x-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
+                    </div>
                 </div>
-                <div class="mip-card">
-                    <div class="mip-header">Side MIP (YZ)</div>
-                    <img id="mip-yz" class="mip-img" src="" alt="MIP YZ">
+
+                <!-- Quick Presets -->
+                <div class="crop-presets-row">
+                    <button class="btn-crop-action highlight" onclick="focusActiveFiberCrop()" title="Auto-crop bounding box around active fiber [Hotkey: F]">🎯 Focus Active [F]</button>
+                    <button class="btn-crop-action" onclick="setCropPreset(16, 79, 16, 79, 16, 79)" title="Center 64³ crop">📦 64³</button>
+                    <button class="btn-crop-action" onclick="setCropPreset(24, 71, 24, 71, 24, 71)" title="Center 48³ crop">📦 48³</button>
+                    <button class="btn-crop-action" onclick="setCropPreset(32, 63, 32, 63, 32, 63)" title="Center 32³ crop">📦 32³</button>
+                    <button class="btn-crop-action" onclick="resetCrop()" title="Restore full 96³ volume view">🔄 Reset 96³</button>
+                    <button class="btn-crop-action" onclick="centerCameraOnCrop()" title="Re-target 3D orbit controls to crop box center">🔍 Center View</button>
+                </div>
+
+                <div style="font-size: 9.5px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; display: flex; justify-content: space-between;">
+                    <span>💾 Purely visual during resolution — saves full 96³ blocks</span>
+                    <span id="crop-dim-text">96 × 96 × 96 vx</span>
                 </div>
             </div>
 
@@ -1001,7 +1085,7 @@ HTML_TEMPLATE = """
                         <span>📍 3D Midpoint Tool</span>
                         <span class="badge highlight" id="waypoint-target-fiber">Fiber #1</span>
                     </div>
-                    <span style="font-size: 10px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace;" id="slice-hover-readout">Slice Cursor: (X:-, Y:-, Z:-)</span>
+                    <span style="font-size: 10px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace;">Internal Guideway</span>
                 </div>
 
                 <div class="waypoint-row">
@@ -1024,29 +1108,37 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Interactive Slice Scrubber -->
-            <div class="slice-section">
-                <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
-                    <div class="panel-title">Orthogonal 3D Slice Scrubber</div>
-                    <span class="badge" id="slice-index-badge">Z: <strong>48 / 95</strong></span>
+            <!-- Active Subvolume Info Card -->
+            <div class="info-card" id="patch-info-card">
+                <div class="panel-title" style="margin-bottom: 2px;">📦 Subvolume Overview</div>
+                <div class="info-row">
+                    <span class="info-label">Patch Origin (Z, Y, X):</span>
+                    <span class="info-value" id="info-origin-val">(0, 0, 0)</span>
                 </div>
-                <div class="slice-controls">
-                    <input type="range" id="slice-slider" class="slice-slider" min="0" max="95" value="48" step="1" oninput="handleSliceSlider(this.value)">
+                <div class="info-row">
+                    <span class="info-label">Collageneous Density:</span>
+                    <span class="info-value" id="info-density-val">0.0%</span>
                 </div>
+                <div class="info-row">
+                    <span class="info-label">Total Curated Dataset:</span>
+                    <span class="info-value" id="info-curated-val">0 cubes</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value" id="info-status-val" style="color: var(--accent-cyan);">Ready for Annotation</span>
+                </div>
+            </div>
 
-                <div class="slice-views-row">
-                    <div class="slice-view-box">
-                        <span class="slice-label">Raw 0,1 Binary (Click to Drop Internal Seed)</span>
-                        <img id="slice-img-raw" class="slice-img" src="" alt="Raw Slice" style="cursor: crosshair;" onclick="handleSliceClick(event)" onmousemove="handleSliceHover(event)" title="Click to auto-fill (X, Y, Z) coordinates or Shift+Click to add midpoint">
+            <!-- Placed Fiber Seeds & Pairing Status Card -->
+            <div class="seeds-dock" id="seeds-dock-card">
+                <div class="dock-header">
+                    <div class="panel-title" style="display: flex; align-items: center; gap: 6px;">
+                        <span>📌 Placed Fiber Seeds</span>
                     </div>
-                    <div class="slice-view-box">
-                        <span class="slice-label">1-Vx Centerlines</span>
-                        <img id="slice-img-skel" class="slice-img" src="" alt="Centerline Slice" style="cursor: crosshair;" onclick="handleSliceClick(event)" onmousemove="handleSliceHover(event)">
-                    </div>
-                    <div class="slice-view-box">
-                        <span class="slice-label">3D Instance Seg</span>
-                        <img id="slice-img-inst" class="slice-img" src="" alt="Instance Slice" style="cursor: crosshair;" onclick="handleSliceClick(event)" onmousemove="handleSliceHover(event)">
-                    </div>
+                    <span id="seeds-count-tag" class="badge" style="color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;">0 Seeds</span>
+                </div>
+                <div class="seeds-chip-container" id="seeds-chip-container">
+                    <div style="color: var(--text-muted); font-size: 11px;">No seeds placed. Click on 3D Box faces to place fiber seeds!</div>
                 </div>
             </div>
         </div>
@@ -1065,10 +1157,21 @@ HTML_TEMPLATE = """
         let currentPatchData = null;
         let activeFiberId = 1;
         let seedsList = [];
-        let autoCandidatesList = [];
-        let allSlicesCache = [];
         let isTransparentMode = true;
         let latestResolvedCurves = {};
+        let rawPointCloudFull = [];
+
+        // Visual Crop State
+        let cropState = {
+            enabled: false,
+            z_min: 0,
+            z_max: 95,
+            y_min: 0,
+            y_max: 95,
+            x_min: 0,
+            x_max: 95
+        };
+        let cropDebounceTimer = null;
 
         // Three.js Global Variables
         let scene, camera, renderer, controls, raycaster, mouse;
@@ -1076,7 +1179,8 @@ HTML_TEMPLATE = """
         let offscreenCanvases = {};
         let faceTextures = {};
         let seedPinsGroup, curves3DGroup, pointCloudMesh;
-        let currentSliderMax = 64;
+        let globalWireMesh = null;
+        let cropWireMesh = null;
 
         function initIdSelector() {
             const badge = document.getElementById('active-id-badge');
@@ -1170,7 +1274,6 @@ HTML_TEMPLATE = """
                     btnToggle.style.background = 'linear-gradient(135deg, #ff1744 0%, #d500f9 100%)';
                 }
             } else {
-                // Default coordinates to the EXACT geometric middle of the fiber
                 let midX = 48, midY = 48, midZ = 48;
                 const curve = latestResolvedCurves[activeFiberId];
                 if (curve && curve.length > 0) {
@@ -1199,14 +1302,12 @@ HTML_TEMPLATE = """
         function toggleWaypoint() {
             const existingIdx = seedsList.findIndex(s => s.fiber_id === activeFiberId && (s.is_waypoint || s.face === 'waypoint' || s.face === 'internal'));
             if (existingIdx >= 0) {
-                // Remove waypoint
                 seedsList.splice(existingIdx, 1);
                 updateThreeSeeds();
                 updateSeedsDock();
                 syncWaypointInputsForActiveFiber();
                 redrawFiberCurveLocally(activeFiberId);
             } else {
-                // Create midpoint at current X, Y, Z
                 onWaypointCoordInput(true);
                 syncWaypointInputsForActiveFiber();
             }
@@ -1249,8 +1350,6 @@ HTML_TEMPLATE = """
             updateThreeSeeds();
             updateSeedsDock();
             syncWaypointInputsForActiveFiber();
-
-            // INSTANT 3D Centerline deformation (No heavy server recomputation!)
             redrawFiberCurveLocally(activeFiberId);
         }
 
@@ -1265,14 +1364,36 @@ HTML_TEMPLATE = """
             }
         }
 
+        function getCropClippingPlanes() {
+            if (!cropState || !cropState.enabled) return [];
+            return [
+                new THREE.Plane(new THREE.Vector3( 1,  0,  0), -cropState.x_min),
+                new THREE.Plane(new THREE.Vector3(-1,  0,  0),  cropState.x_max + 1),
+                new THREE.Plane(new THREE.Vector3( 0,  1,  0), -cropState.y_min),
+                new THREE.Plane(new THREE.Vector3( 0, -1,  0),  cropState.y_max + 1),
+                new THREE.Plane(new THREE.Vector3( 0,  0,  1), -cropState.z_min),
+                new THREE.Plane(new THREE.Vector3( 0,  0, -1),  cropState.z_max + 1)
+            ];
+        }
+
+        function updateThreeCurvesClipping() {
+            if (!curves3DGroup) return;
+            const planes = getCropClippingPlanes();
+            curves3DGroup.children.forEach(child => {
+                if (child.material) {
+                    child.material.clippingPlanes = planes;
+                    child.material.clipShadows = true;
+                    child.material.needsUpdate = true;
+                }
+            });
+        }
+
         function redrawFiberCurveLocally(fid) {
             const fSeeds = seedsList.filter(s => s.fiber_id === fid);
             if (fSeeds.length < 2) return;
 
-            // Extract 3D control points (X=x, Y=y, Z=z)
             const controlPoints = fSeeds.map(s => new THREE.Vector3(s.pos3d[2], s.pos3d[1], s.pos3d[0]));
 
-            // Remove existing mesh for this fiber
             const oldMesh = curves3DGroup.children.find(c => c.userData && c.userData.fiberId === fid);
             if (oldMesh) {
                 curves3DGroup.remove(oldMesh);
@@ -1280,7 +1401,6 @@ HTML_TEMPLATE = """
                 if (oldMesh.material) oldMesh.material.dispose();
             }
 
-            // Create smooth Catmull-Rom spline tube through start -> midpoint(s) -> end
             const curve = new THREE.CatmullRomCurve3(controlPoints);
             const tubeGeo = new THREE.TubeGeometry(curve, 32, 1.3, 8, false);
             const colorHex = parseInt(COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length].replace('#', '0x'));
@@ -1288,52 +1408,257 @@ HTML_TEMPLATE = """
                 color: colorHex,
                 emissive: colorHex,
                 emissiveIntensity: 0.75,
-                roughness: 0.3
+                roughness: 0.3,
+                clippingPlanes: getCropClippingPlanes(),
+                clipShadows: true
             });
             const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
             tubeMesh.userData = { fiberId: fid };
             curves3DGroup.add(tubeMesh);
         }
 
-        function handleSliceHover(event) {
-            const img = document.getElementById('slice-img-raw');
-            if (!img) return;
-            const rect = img.getBoundingClientRect();
-            const clickX = event.clientX - rect.left;
-            const clickY = event.clientY - rect.top;
+        // =========================================================================
+        // Visual Crop ROI Logic
+        // =========================================================================
 
-            const S = 96;
-            const x = Math.max(0, Math.min(S - 1, Math.round((clickX / rect.width) * (S - 1))));
-            const y = Math.max(0, Math.min(S - 1, Math.round((clickY / rect.height) * (S - 1))));
-            const z = parseInt(document.getElementById('slice-slider').value);
+        function toggleCropEnabled(enabled) {
+            cropState.enabled = !!enabled;
+            const chkStage = document.getElementById('chk-crop-toggle');
+            const chkActive = document.getElementById('chk-crop-active');
+            const cropCard = document.getElementById('crop-card');
+            const stagePill = document.getElementById('crop-stage-toggle');
 
-            const readout = document.getElementById('slice-hover-readout');
-            if (readout) {
-                readout.innerText = `Slice Cursor: (X:${x}, Y:${y}, Z:${z})`;
+            if (chkStage) chkStage.checked = cropState.enabled;
+            if (chkActive) chkActive.checked = cropState.enabled;
+            if (cropCard) cropCard.classList.toggle('active', cropState.enabled);
+            if (stagePill) stagePill.classList.toggle('highlight', cropState.enabled);
+
+            if (cropState.enabled) {
+                if (cropState.z_min === 0 && cropState.z_max === 95 &&
+                    cropState.y_min === 0 && cropState.y_max === 95 &&
+                    cropState.x_min === 0 && cropState.x_max === 95) {
+                    setCropPresetValues(16, 79, 16, 79, 16, 79);
+                }
+            }
+
+            syncCropUI();
+            applyCropView(false);
+        }
+
+        function handleCropWheel(event, axis, bound) {
+            event.preventDefault();
+            const input = document.getElementById(`crop-${axis}-${bound}`);
+            if (!input) return;
+            let val = parseInt(input.value) || 0;
+            val += (event.deltaY < 0 ? 2 : -2);
+            val = Math.max(0, Math.min(95, val));
+            onCropRangeInput(axis, bound, val);
+        }
+
+        function onCropRangeInput(axis, bound, valStr) {
+            let val = parseInt(valStr);
+            if (isNaN(val)) val = (bound === 'min' ? 0 : 95);
+            val = Math.max(0, Math.min(95, val));
+
+            if (bound === 'min') {
+                cropState[`${axis}_min`] = Math.min(val, cropState[`${axis}_max`]);
+            } else {
+                cropState[`${axis}_max`] = Math.max(val, cropState[`${axis}_min`]);
+            }
+
+            if (!cropState.enabled) {
+                toggleCropEnabled(true);
+            } else {
+                syncCropUI();
+                applyCropView(true);
             }
         }
 
-        function handleSliceClick(event) {
-            const img = document.getElementById('slice-img-raw');
-            const rect = img.getBoundingClientRect();
-            const clickX = event.clientX - rect.left;
-            const clickY = event.clientY - rect.top;
+        function onCropSliderInput(axis, bound, valStr) {
+            let val = parseInt(valStr);
+            if (isNaN(val)) return;
 
-            const S = 96;
-            const x = Math.max(0, Math.min(S - 1, Math.round((clickX / rect.width) * (S - 1))));
-            const y = Math.max(0, Math.min(S - 1, Math.round((clickY / rect.height) * (S - 1))));
-            const z = parseInt(document.getElementById('slice-slider').value);
+            if (bound === 'min') {
+                if (val > cropState[`${axis}_max`]) {
+                    cropState[`${axis}_max`] = val;
+                }
+                cropState[`${axis}_min`] = val;
+            } else {
+                if (val < cropState[`${axis}_min`]) {
+                    cropState[`${axis}_min`] = val;
+                }
+                cropState[`${axis}_max`] = val;
+            }
 
-            // Auto-populate the direct waypoint coordinate boxes
-            document.getElementById('wp-x').value = x;
-            document.getElementById('wp-y').value = y;
-            document.getElementById('wp-z').value = z;
-
-            // If Shift key held during click, directly add as midpoint
-            if (event.shiftKey) {
-                insertDirectWaypoint();
+            if (!cropState.enabled) {
+                toggleCropEnabled(true);
+            } else {
+                syncCropUI();
+                applyCropView(true);
             }
         }
+
+        function setCropPresetValues(z0, z1, y0, y1, x0, x1) {
+            cropState.z_min = Math.max(0, Math.min(95, z0));
+            cropState.z_max = Math.max(cropState.z_min, Math.min(95, z1));
+            cropState.y_min = Math.max(0, Math.min(95, y0));
+            cropState.y_max = Math.max(cropState.y_min, Math.min(95, y1));
+            cropState.x_min = Math.max(0, Math.min(95, x0));
+            cropState.x_max = Math.max(cropState.x_min, Math.min(95, x1));
+        }
+
+        function setCropPreset(z0, z1, y0, y1, x0, x1) {
+            setCropPresetValues(z0, z1, y0, y1, x0, x1);
+            if (!cropState.enabled) toggleCropEnabled(true);
+            else {
+                syncCropUI();
+                applyCropView(false);
+            }
+            centerCameraOnCrop();
+        }
+
+        function focusActiveFiberCrop() {
+            const fSeeds = seedsList.filter(s => s.fiber_id === activeFiberId);
+            const curvePts = latestResolvedCurves[activeFiberId] || [];
+
+            const allPts = [];
+            fSeeds.forEach(s => allPts.push(s.pos3d));
+            curvePts.forEach(p => allPts.push(p));
+
+            if (allPts.length === 0) {
+                setCropPreset(24, 71, 24, 71, 24, 71);
+                return;
+            }
+
+            let minZ = 95, maxZ = 0, minY = 95, maxY = 0, minX = 95, maxX = 0;
+            allPts.forEach(p => {
+                minZ = Math.min(minZ, p[0]); maxZ = Math.max(maxZ, p[0]);
+                minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+                minX = Math.min(minX, p[2]); maxX = Math.max(maxX, p[2]);
+            });
+
+            const pad = 10;
+            setCropPresetValues(
+                Math.max(0, minZ - pad), Math.min(95, maxZ + pad),
+                Math.max(0, minY - pad), Math.min(95, maxY + pad),
+                Math.max(0, minX - pad), Math.min(95, maxX + pad)
+            );
+
+            if (!cropState.enabled) toggleCropEnabled(true);
+            else {
+                syncCropUI();
+                applyCropView(false);
+            }
+            centerCameraOnCrop();
+        }
+
+        function resetCrop() {
+            setCropPresetValues(0, 95, 0, 95, 0, 95);
+            toggleCropEnabled(false);
+            if (controls) controls.target.set(48, 48, 48);
+        }
+
+        function centerCameraOnCrop() {
+            if (!controls) return;
+            if (cropState.enabled) {
+                const cx = (cropState.x_min + cropState.x_max + 1) / 2;
+                const cy = (cropState.y_min + cropState.y_max + 1) / 2;
+                const cz = (cropState.z_min + cropState.z_max + 1) / 2;
+                controls.target.set(cx, cy, cz);
+            } else {
+                controls.target.set(48, 48, 48);
+            }
+        }
+
+        function syncCropUI() {
+            ['z', 'y', 'x'].forEach(axis => {
+                const minVal = cropState[`${axis}_min`];
+                const maxVal = cropState[`${axis}_max`];
+
+                const minInput = document.getElementById(`crop-${axis}-min`);
+                const maxInput = document.getElementById(`crop-${axis}-max`);
+                const minSlider = document.getElementById(`crop-${axis}-min-slider`);
+                const maxSlider = document.getElementById(`crop-${axis}-max-slider`);
+                const spanTag = document.getElementById(`crop-${axis}-span`);
+
+                if (minInput) minInput.value = minVal;
+                if (maxInput) maxInput.value = maxVal;
+                if (minSlider) minSlider.value = minVal;
+                if (maxSlider) maxSlider.value = maxVal;
+                if (spanTag) spanTag.innerText = `Δ${maxVal - minVal + 1}`;
+            });
+
+            const dz = cropState.z_max - cropState.z_min + 1;
+            const dy = cropState.y_max - cropState.y_min + 1;
+            const dx = cropState.x_max - cropState.x_min + 1;
+            const volPct = ((dz * dy * dx) / (96 * 96 * 96) * 100).toFixed(1);
+
+            const badge = document.getElementById('crop-stats-badge');
+            const dimText = document.getElementById('crop-dim-text');
+
+            if (cropState.enabled) {
+                if (badge) badge.innerHTML = `<strong style="color:var(--accent-cyan);">ROI: ${dz}×${dy}×${dx} (${volPct}%)</strong>`;
+                if (dimText) dimText.innerText = `Sub-box: ${dz} × ${dy} × ${dx} vx`;
+            } else {
+                if (badge) badge.innerHTML = `Full: 96³ (100%)`;
+                if (dimText) dimText.innerText = `96 × 96 × 96 vx`;
+            }
+        }
+
+        function applyCropView(debounce = true) {
+            const z0 = cropState.enabled ? cropState.z_min : 0;
+            const z1 = cropState.enabled ? cropState.z_max : 95;
+            const y0 = cropState.enabled ? cropState.y_min : 0;
+            const y1 = cropState.enabled ? cropState.y_max : 95;
+            const x0 = cropState.enabled ? cropState.x_min : 0;
+            const x1 = cropState.enabled ? cropState.x_max : 95;
+
+            updateThreeCropBoxGeometry(z0, z1, y0, y1, x0, x1);
+            updateThreePointCloud();
+            updateThreeSeeds();
+
+            if (cropDebounceTimer) clearTimeout(cropDebounceTimer);
+
+            if (debounce) {
+                cropDebounceTimer = setTimeout(fetchCroppedData, 80);
+            } else {
+                fetchCroppedData();
+            }
+        }
+
+        async function fetchCroppedData() {
+            if (!currentPatchData) return;
+
+            if (!cropState.enabled) {
+                updateThreeFaceTextures(currentPatchData.face_images, currentPatchData.face_images_rgba);
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/patch/crop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        z_min: cropState.z_min,
+                        z_max: cropState.z_max,
+                        y_min: cropState.y_min,
+                        y_max: cropState.y_max,
+                        x_min: cropState.x_min,
+                        x_max: cropState.x_max
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) return;
+
+                updateThreeFaceTextures(data.face_images, data.face_images_rgba);
+            } catch (err) {
+                console.error("Error fetching cropped view data:", err);
+            }
+        }
+
+        // =========================================================================
+        // Three.js 3D Viewport Implementation
+        // =========================================================================
 
         function initThreeJS() {
             const container = document.getElementById('three-container');
@@ -1345,6 +1670,7 @@ HTML_TEMPLATE = """
             camera.position.set(130, 110, 160);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.localClippingEnabled = true;
             renderer.setSize(width, height);
             renderer.setPixelRatio(window.devicePixelRatio);
             container.appendChild(renderer.domElement);
@@ -1364,17 +1690,30 @@ HTML_TEMPLATE = """
             dirLight.position.set(100, 150, 100);
             scene.add(dirLight);
 
-            // Bounding Wireframe Box
-            const boxGeo = new THREE.BoxGeometry(96, 96, 96);
-            const wireMat = new THREE.MeshBasicMaterial({
-                color: 0x3b435d,
+            // 1. Global Wireframe Box (Outer 96³ reference)
+            const globalBoxGeo = new THREE.BoxGeometry(96, 96, 96);
+            const globalWireMat = new THREE.MeshBasicMaterial({
+                color: 0x27304a,
                 wireframe: true,
                 transparent: true,
-                opacity: 0.55
+                opacity: 0.45
             });
-            const wireMesh = new THREE.Mesh(boxGeo, wireMat);
-            wireMesh.position.set(48, 48, 48);
-            scene.add(wireMesh);
+            globalWireMesh = new THREE.Mesh(globalBoxGeo, globalWireMat);
+            globalWireMesh.position.set(48, 48, 48);
+            scene.add(globalWireMesh);
+
+            // 2. Active Crop Wireframe Box (Bright cyan highlight)
+            const cropBoxGeo = new THREE.BoxGeometry(96, 96, 96);
+            const cropWireMat = new THREE.MeshBasicMaterial({
+                color: 0x00e5ff,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.85
+            });
+            cropWireMesh = new THREE.Mesh(cropBoxGeo, cropWireMat);
+            cropWireMesh.position.set(48, 48, 48);
+            cropWireMesh.visible = false;
+            scene.add(cropWireMesh);
 
             createThreeFacePlanes();
 
@@ -1400,6 +1739,10 @@ HTML_TEMPLATE = """
             });
 
             window.addEventListener('resize', onWindowResize);
+            if (window.ResizeObserver) {
+                const ro = new ResizeObserver(() => onWindowResize());
+                ro.observe(container);
+            }
 
             function animate() {
                 requestAnimationFrame(animate);
@@ -1414,6 +1757,7 @@ HTML_TEMPLATE = """
             if (!container || !renderer || !camera) return;
             const width = container.clientWidth;
             const height = container.clientHeight;
+            if (width === 0 || height === 0) return;
             camera.aspect = width / height;
             camera.updateProjectionMatrix();
             renderer.setSize(width, height);
@@ -1437,50 +1781,44 @@ HTML_TEMPLATE = """
             return geo;
         }
 
+        function getFaceQuadVertices(faceName, z0, z1, y0, y1, x0, x1) {
+            const xMax = x1 + 1;
+            const yMax = y1 + 1;
+            const zMax = z1 + 1;
+
+            if (faceName === 'z_min') {
+                return { v0: [x0, y0, z0], v1: [xMax, y0, z0], v2: [xMax, yMax, z0], v3: [x0, yMax, z0] };
+            } else if (faceName === 'z_max') {
+                return { v0: [x0, y0, zMax], v1: [xMax, y0, zMax], v2: [xMax, yMax, zMax], v3: [x0, yMax, zMax] };
+            } else if (faceName === 'y_min') {
+                return { v0: [x0, y0, z0], v1: [xMax, y0, z0], v2: [xMax, y0, zMax], v3: [x0, y0, zMax] };
+            } else if (faceName === 'y_max') {
+                return { v0: [x0, yMax, z0], v1: [xMax, yMax, z0], v2: [xMax, yMax, zMax], v3: [x0, yMax, zMax] };
+            } else if (faceName === 'x_min') {
+                return { v0: [x0, y0, z0], v1: [x0, yMax, z0], v2: [x0, yMax, zMax], v3: [x0, y0, zMax] };
+            } else { // x_max
+                return { v0: [xMax, y0, z0], v1: [xMax, yMax, z0], v2: [xMax, yMax, zMax], v3: [xMax, y0, zMax] };
+            }
+        }
+
         function createThreeFacePlanes() {
             faceMeshes = [];
-            const S = 96;
+            const faceNames = ['z_min', 'z_max', 'y_min', 'y_max', 'x_min', 'x_max'];
 
-            const faceConfigs = [
-                {
-                    name: 'z_min',
-                    v0: [0, 0, 0], v1: [S, 0, 0], v2: [S, S, 0], v3: [0, S, 0]
-                },
-                {
-                    name: 'z_max',
-                    v0: [0, 0, S], v1: [S, 0, S], v2: [S, S, S], v3: [0, S, S]
-                },
-                {
-                    name: 'y_min',
-                    v0: [0, 0, 0], v1: [S, 0, 0], v2: [S, 0, S], v3: [0, 0, S]
-                },
-                {
-                    name: 'y_max',
-                    v0: [0, S, 0], v1: [S, S, 0], v2: [S, S, S], v3: [0, S, S]
-                },
-                {
-                    name: 'x_min',
-                    v0: [0, 0, 0], v1: [0, S, 0], v2: [0, S, S], v3: [0, 0, S]
-                },
-                {
-                    name: 'x_max',
-                    v0: [S, 0, 0], v1: [S, S, 0], v2: [S, S, S], v3: [S, 0, S]
-                }
-            ];
-
-            faceConfigs.forEach(cfg => {
+            faceNames.forEach(name => {
                 const cvs = document.createElement('canvas');
-                cvs.width = S;
-                cvs.height = S;
-                offscreenCanvases[cfg.name] = cvs;
+                cvs.width = 96;
+                cvs.height = 96;
+                offscreenCanvases[name] = cvs;
 
                 const tex = new THREE.CanvasTexture(cvs);
                 tex.magFilter = THREE.NearestFilter;
                 tex.minFilter = THREE.NearestFilter;
                 tex.flipY = false;
-                faceTextures[cfg.name] = tex;
+                faceTextures[name] = tex;
 
-                const geo = createQuadGeometry(cfg.v0, cfg.v1, cfg.v2, cfg.v3);
+                const quad = getFaceQuadVertices(name, 0, 95, 0, 95, 0, 95);
+                const geo = createQuadGeometry(quad.v0, quad.v1, quad.v2, quad.v3);
                 const mat = new THREE.MeshBasicMaterial({
                     map: tex,
                     transparent: true,
@@ -1489,10 +1827,30 @@ HTML_TEMPLATE = """
                     depthWrite: false
                 });
                 const mesh = new THREE.Mesh(geo, mat);
-                mesh.userData = { faceName: cfg.name };
+                mesh.userData = { faceName: name };
                 scene.add(mesh);
                 faceMeshes.push(mesh);
             });
+        }
+
+        function updateThreeCropBoxGeometry(z0, z1, y0, y1, x0, x1) {
+            if (cropWireMesh) {
+                cropWireMesh.visible = cropState.enabled;
+                if (cropState.enabled) {
+                    cropWireMesh.geometry.dispose();
+                    cropWireMesh.geometry = new THREE.BoxGeometry(x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
+                    cropWireMesh.position.set((x0 + x1 + 1) / 2, (y0 + y1 + 1) / 2, (z0 + z1 + 1) / 2);
+                }
+            }
+
+            faceMeshes.forEach(mesh => {
+                const name = mesh.userData.faceName;
+                const quad = getFaceQuadVertices(name, z0, z1, y0, y1, x0, x1);
+                if (mesh.geometry) mesh.geometry.dispose();
+                mesh.geometry = createQuadGeometry(quad.v0, quad.v1, quad.v2, quad.v3);
+            });
+
+            updateThreeCurvesClipping();
         }
 
         function updateThreeFaceTextures(faceImagesGrayscale, faceImagesRGBA) {
@@ -1505,6 +1863,8 @@ HTML_TEMPLATE = """
                 img.onload = () => {
                     const cvs = offscreenCanvases[faceName];
                     if (cvs) {
+                        cvs.width = img.naturalWidth || img.width;
+                        cvs.height = img.naturalHeight || img.height;
                         const ctx = cvs.getContext('2d');
                         ctx.clearRect(0, 0, cvs.width, cvs.height);
                         ctx.drawImage(img, 0, 0);
@@ -1519,7 +1879,9 @@ HTML_TEMPLATE = """
 
         function toggleTransparency(enabled) {
             isTransparentMode = enabled;
-            if (currentPatchData) {
+            if (cropState.enabled) {
+                fetchCroppedData();
+            } else if (currentPatchData) {
                 updateThreeFaceTextures(currentPatchData.face_images, currentPatchData.face_images_rgba);
             }
         }
@@ -1536,30 +1898,48 @@ HTML_TEMPLATE = """
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(faceMeshes, true);
+
+            // Raycast strictly against the 3D box faces (closest front-facing intersection)
+            const intersects = raycaster.intersectObjects(faceMeshes, false);
 
             if (intersects.length > 0) {
                 const hit = intersects[0];
                 const faceName = hit.object.userData.faceName;
                 const pt = hit.point;
 
-                let z = Math.max(0, Math.min(95, Math.round(pt.z)));
-                let y = Math.max(0, Math.min(95, Math.round(pt.y)));
-                let x = Math.max(0, Math.min(95, Math.round(pt.x)));
+                const z0 = cropState.enabled ? cropState.z_min : 0;
+                const z1 = cropState.enabled ? cropState.z_max : 95;
+                const y0 = cropState.enabled ? cropState.y_min : 0;
+                const y1 = cropState.enabled ? cropState.y_max : 95;
+                const x0 = cropState.enabled ? cropState.x_min : 0;
+                const x1 = cropState.enabled ? cropState.x_max : 95;
 
-                if (faceName === 'z_min') z = 0;
-                else if (faceName === 'z_max') z = 95;
-                else if (faceName === 'y_min') y = 0;
-                else if (faceName === 'y_max') y = 95;
-                else if (faceName === 'x_min') x = 0;
-                else if (faceName === 'x_max') x = 95;
+                let z = Math.max(z0, Math.min(z1, Math.round(pt.z)));
+                let y = Math.max(y0, Math.min(y1, Math.round(pt.y)));
+                let x = Math.max(x0, Math.min(x1, Math.round(pt.x)));
+
+                if (faceName === 'z_min') z = z0;
+                else if (faceName === 'z_max') z = z1;
+                else if (faceName === 'y_min') y = y0;
+                else if (faceName === 'y_max') y = y1;
+                else if (faceName === 'x_min') x = x0;
+                else if (faceName === 'x_max') x = x1;
 
                 let u = y, v = x;
                 if (faceName === 'z_min' || faceName === 'z_max') { u = y; v = x; }
                 else if (faceName === 'y_min' || faceName === 'y_max') { u = z; v = x; }
                 else { u = z; v = y; }
 
-                const existingIdx = seedsList.findIndex(s => s.face === faceName && Math.hypot(s.u - u, s.v - v) < 6.0);
+                // Strict check: Must be on the exact same face AND within 4 voxels in 3D
+                // This completely prevents deleting points on opposite faces or other sides of the cube
+                const existingIdx = seedsList.findIndex(s => {
+                    if (s.face !== faceName) return false;
+                    const dz = s.pos3d[0] - z;
+                    const dy = s.pos3d[1] - y;
+                    const dx = s.pos3d[2] - x;
+                    return Math.hypot(dz, dy, dx) < 4.0;
+                });
+
                 if (existingIdx >= 0) {
                     seedsList.splice(existingIdx, 1);
                 } else {
@@ -1571,7 +1951,7 @@ HTML_TEMPLATE = """
                         fiber_id: activeFiberId
                     });
 
-                    // QoL: Only auto-advance if we just completed the 2nd point for the HIGHEST/latest current Fiber ID
+                    // QoL: Only auto-advance if we just completed the 2nd point for the HIGHEST current Fiber ID
                     const currentFiberBoundarySeeds = seedsList.filter(s => s.fiber_id === activeFiberId && !s.is_waypoint && s.face !== 'waypoint');
                     if (currentFiberBoundarySeeds.length === 2) {
                         const allFiberIds = seedsList.map(s => s.fiber_id);
@@ -1594,7 +1974,6 @@ HTML_TEMPLATE = """
             canvas.height = 128;
             const ctx = canvas.getContext('2d');
 
-            // Solid background circle with bright white border
             ctx.beginPath();
             ctx.arc(64, 64, 54, 0, Math.PI * 2);
             ctx.fillStyle = colorHexStr;
@@ -1603,13 +1982,11 @@ HTML_TEMPLATE = """
             ctx.strokeStyle = '#ffffff';
             ctx.stroke();
 
-            // Dark drop shadow circle for contrast
             ctx.beginPath();
             ctx.arc(64, 64, 46, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(0, 0, 0, 0.40)';
             ctx.fill();
 
-            // Crisp bold number text
             ctx.fillStyle = '#ffffff';
             ctx.font = `900 ${fiberId > 99 ? 42 : (fiberId > 9 ? 54 : 66)}px "JetBrains Mono", Arial, sans-serif`;
             ctx.textAlign = 'center';
@@ -1621,7 +1998,8 @@ HTML_TEMPLATE = """
             const mat = new THREE.SpriteMaterial({
                 map: texture,
                 depthTest: false,
-                transparent: true
+                transparent: true,
+                opacity: 1.0
             });
             const sprite = new THREE.Sprite(mat);
             sprite.scale.set(7.5, 7.5, 1.0);
@@ -1639,28 +2017,41 @@ HTML_TEMPLATE = """
                 }
             }
 
+            const z0 = cropState.enabled ? cropState.z_min : 0;
+            const z1 = cropState.enabled ? cropState.z_max : 95;
+            const y0 = cropState.enabled ? cropState.y_min : 0;
+            const y1 = cropState.enabled ? cropState.y_max : 95;
+            const x0 = cropState.enabled ? cropState.x_min : 0;
+            const x1 = cropState.enabled ? cropState.x_max : 95;
+
             seedsList.forEach(s => {
                 const z = s.pos3d[0];
                 const y = s.pos3d[1];
                 const x = s.pos3d[2];
 
+                const isInside = (z >= z0 && z <= z1 && y >= y0 && y <= y1 && x >= x0 && x <= x1);
+                // When crop ROI is active, completely hide any seed located outside the crop box
+                if (cropState.enabled && !isInside) {
+                    return;
+                }
+
                 const colorHexStr = COLOR_PALETTE[(s.fiber_id - 1) % COLOR_PALETTE.length];
                 const colorHex = parseInt(colorHexStr.replace('#', '0x'));
                 const isWp = s.is_waypoint || s.face === 'waypoint' || s.face === 'internal';
 
-                // 3D Geometry: Glowing Diamond/Octahedron for internal waypoints, Sphere for boundary pins
                 const pinGeo = isWp ? new THREE.OctahedronGeometry(2.8, 0) : new THREE.SphereGeometry(2.0, 16, 16);
                 const pinMat = new THREE.MeshStandardMaterial({
                     color: isWp ? 0xffffff : colorHex,
                     emissive: colorHex,
                     emissiveIntensity: isWp ? 1.4 : 0.85,
-                    roughness: 0.2
+                    roughness: 0.2,
+                    transparent: false,
+                    opacity: 1.0
                 });
                 const pinMesh = new THREE.Mesh(pinGeo, pinMat);
                 pinMesh.position.set(x, y, z);
                 seedPinsGroup.add(pinMesh);
 
-                // 3D Number Billboard Sprite Badge
                 const sprite = createSeedSprite(s.fiber_id, colorHexStr);
                 sprite.position.set(x, y, z);
                 seedPinsGroup.add(sprite);
@@ -1686,7 +2077,6 @@ HTML_TEMPLATE = """
                 const fid = parseInt(fidStr);
                 const colorHex = parseInt(COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length].replace('#', '0x'));
 
-                // Three.js vectors: X=x, Y=y, Z=z
                 const vectors = pts.map(p => new THREE.Vector3(p[2], p[1], p[0]));
                 if (vectors.length >= 2) {
                     const curve = new THREE.CatmullRomCurve3(vectors);
@@ -1695,7 +2085,9 @@ HTML_TEMPLATE = """
                         color: colorHex,
                         emissive: colorHex,
                         emissiveIntensity: 0.75,
-                        roughness: 0.3
+                        roughness: 0.3,
+                        clippingPlanes: getCropClippingPlanes(),
+                        clipShadows: true
                     });
                     const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
                     tubeMesh.userData = { fiberId: fid };
@@ -1707,6 +2099,8 @@ HTML_TEMPLATE = """
         }
 
         function updateThreePointCloud(points) {
+            if (points) rawPointCloudFull = points;
+
             if (pointCloudMesh) {
                 scene.remove(pointCloudMesh);
                 if (pointCloudMesh.geometry) pointCloudMesh.geometry.dispose();
@@ -1714,15 +2108,29 @@ HTML_TEMPLATE = """
                 pointCloudMesh = null;
             }
 
-            if (!points || points.length === 0) return;
+            if (!rawPointCloudFull || rawPointCloudFull.length === 0) return;
+
+            const z0 = cropState.enabled ? cropState.z_min : 0;
+            const z1 = cropState.enabled ? cropState.z_max : 95;
+            const y0 = cropState.enabled ? cropState.y_min : 0;
+            const y1 = cropState.enabled ? cropState.y_max : 95;
+            const x0 = cropState.enabled ? cropState.x_min : 0;
+            const x1 = cropState.enabled ? cropState.x_max : 95;
+
+            const filtered = rawPointCloudFull.filter(p => 
+                p[0] >= z0 && p[0] <= z1 &&
+                p[1] >= y0 && p[1] <= y1 &&
+                p[2] >= x0 && p[2] <= x1
+            );
+
+            if (filtered.length === 0) return;
 
             const geo = new THREE.BufferGeometry();
-            const positions = new Float32Array(points.length * 3);
-            for (let i = 0; i < points.length; i++) {
-                // Map numpy (z, y, x) to 3D Three.js (x, y, z)
-                positions[i * 3] = points[i][2];     // X = x
-                positions[i * 3 + 1] = points[i][1]; // Y = y
-                positions[i * 3 + 2] = points[i][0]; // Z = z
+            const positions = new Float32Array(filtered.length * 3);
+            for (let i = 0; i < filtered.length; i++) {
+                positions[i * 3] = filtered[i][2];     // X = x
+                positions[i * 3 + 1] = filtered[i][1]; // Y = y
+                positions[i * 3 + 2] = filtered[i][0]; // Z = z
             }
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
@@ -1776,6 +2184,18 @@ HTML_TEMPLATE = """
             }
         }
 
+        function updateSidebarInfo(origin, density, curatedTotal, statusText) {
+            const orgVal = document.getElementById('info-origin-val');
+            const denVal = document.getElementById('info-density-val');
+            const curVal = document.getElementById('info-curated-val');
+            const stVal = document.getElementById('info-status-val');
+
+            if (orgVal && origin) orgVal.innerText = `(Z:${origin[0]}, Y:${origin[1]}, X:${origin[2]})`;
+            if (denVal && density !== undefined) denVal.innerText = `${(density * 100).toFixed(1)}%`;
+            if (curVal && curatedTotal !== undefined) curVal.innerText = `${curatedTotal} cubes`;
+            if (stVal && statusText) stVal.innerText = statusText;
+        }
+
         function handleCoordKey(event) {
             if (event.key === 'Enter') {
                 event.preventDefault();
@@ -1811,7 +2231,6 @@ HTML_TEMPLATE = """
 
                 currentPatchData = data;
                 seedsList = [];
-                autoCandidatesList = data.auto_candidates || [];
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
@@ -1820,20 +2239,16 @@ HTML_TEMPLATE = """
                 document.getElementById('curated-count').innerText = data.curated_total;
                 document.getElementById('perf-badge').innerText = `📍 Loaded 96³ Subvolume at Origin (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
 
-                // Update 3D Face Canvas Textures & Point Cloud
-                updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                updateThreePointCloud(data.point_cloud);
+                updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
 
-                // Update 3D MIPs
-                document.getElementById('mip-xy').src = data.mip_images.raw_xy;
-                document.getElementById('mip-xz').src = data.mip_images.raw_xz;
-                document.getElementById('mip-yz').src = data.mip_images.raw_yz;
+                rawPointCloudFull = data.point_cloud || [];
+                if (cropState.enabled) {
+                    applyCropView(false);
+                } else {
+                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
+                    updateThreePointCloud(rawPointCloudFull);
+                }
 
-                // Update Slices
-                allSlicesCache = data.slices || [];
-                handleSliceSlider(document.getElementById('slice-slider').value);
-
-                // Clear 3D curves & seed pins & reset active ID to 1
                 activeFiberId = 1;
                 renderThree3DCurves(null);
                 updateThreeSeeds();
@@ -1883,7 +2298,6 @@ HTML_TEMPLATE = """
                 currentlyLoadedPatchIndex = parseInt(patchId);
                 currentPatchData = data;
                 seedsList = data.loaded_seeds || [];
-                autoCandidatesList = [];
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
@@ -1892,20 +2306,17 @@ HTML_TEMPLATE = """
                 document.getElementById('curated-count').innerText = data.curated_total;
                 document.getElementById('perf-badge').innerText = `⚡ Loaded Saved Sample #${String(patchId).padStart(4, '0')} with ${data.num_fibers} Fibers!`;
 
-                // Update 3D Face Canvas Textures & Point Cloud
-                updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                updateThreePointCloud(data.point_cloud);
+                updateSidebarInfo(data.origin, data.density, data.curated_total, `Loaded #${String(patchId).padStart(4, '0')} (${data.num_fibers} Fibers)`);
 
-                // Update 3D MIPs
-                document.getElementById('mip-xy').src = data.mip_results?.inst_xy || data.mip_images.raw_xy;
-                document.getElementById('mip-xz').src = data.mip_results?.inst_xz || data.mip_images.raw_xz;
-                document.getElementById('mip-yz').src = data.mip_results?.inst_yz || data.mip_images.raw_yz;
+                rawPointCloudFull = data.point_cloud || [];
 
-                // Update Slices
-                allSlicesCache = data.slices || [];
-                handleSliceSlider(document.getElementById('slice-slider').value);
+                if (cropState.enabled) {
+                    applyCropView(false);
+                } else {
+                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
+                    updateThreePointCloud(rawPointCloudFull);
+                }
 
-                // Render 3D curves & seed pins
                 renderThree3DCurves(data.curves_3d);
                 updateThreeSeeds();
                 updateSeedsDock();
@@ -1927,7 +2338,6 @@ HTML_TEMPLATE = """
                 const data = await res.json();
                 currentPatchData = data;
                 seedsList = [];
-                autoCandidatesList = data.auto_candidates || [];
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
@@ -1936,20 +2346,17 @@ HTML_TEMPLATE = """
                 document.getElementById('curated-count').innerText = data.curated_total;
                 document.getElementById('perf-badge').innerText = 'Ready for Seed Placement';
 
-                // Update 3D Face Canvas Textures & Point Cloud
-                updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                updateThreePointCloud(data.point_cloud);
+                updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
 
-                // Update 3D MIPs
-                document.getElementById('mip-xy').src = data.mip_images.raw_xy;
-                document.getElementById('mip-xz').src = data.mip_images.raw_xz;
-                document.getElementById('mip-yz').src = data.mip_images.raw_yz;
+                rawPointCloudFull = data.point_cloud || [];
 
-                // Update Slices
-                allSlicesCache = data.slices || [];
-                handleSliceSlider(document.getElementById('slice-slider').value);
+                if (cropState.enabled) {
+                    applyCropView(false);
+                } else {
+                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
+                    updateThreePointCloud(rawPointCloudFull);
+                }
 
-                // Clear 3D curves & seed pins & reset active ID to 1
                 activeFiberId = 1;
                 renderThree3DCurves(null);
                 updateThreeSeeds();
@@ -1959,24 +2366,6 @@ HTML_TEMPLATE = """
                 console.error("Failed to fetch patch:", err);
                 document.getElementById('perf-badge').innerText = '❌ Error fetching patch';
             }
-        }
-
-        function autoPopulateCandidates() {
-            if (!autoCandidatesList || autoCandidatesList.length === 0) return;
-            seedsList = [];
-            autoCandidatesList.forEach((cand, idx) => {
-                seedsList.push({
-                    face: cand.face,
-                    u: cand.u,
-                    v: cand.v,
-                    pos3d: cand.pos3d,
-                    fiber_id: Math.floor(idx / 2) + 1
-                });
-            });
-
-            updateThreeSeeds();
-            updateSeedsDock();
-            initIdSelector();
         }
 
         function clearAllSeeds() {
@@ -2003,7 +2392,7 @@ HTML_TEMPLATE = """
             countTag.innerText = `${seedsList.length} Seeds (${sortedIds.length} Fibers)`;
 
             if (sortedIds.length === 0) {
-                container.innerHTML = `<div style="color: var(--text-muted); font-size: 11px;">No seeds placed. Click on 3D Box faces or click Auto-Detect!</div>`;
+                container.innerHTML = `<div style="color: var(--text-muted); font-size: 11px;">No seeds placed. Click on 3D Box faces to place fiber seeds!</div>`;
                 return;
             }
 
@@ -2030,10 +2419,12 @@ HTML_TEMPLATE = """
                 }).join('<span style="color:var(--accent-cyan); font-size:10px; margin:0 2px;">➜</span>');
 
                 chip.innerHTML = `
-                    <span class="chip-color-dot" style="background: ${color}; cursor:pointer;" onclick="setActiveId(${id})" title="Click to make Fiber #${id} active"></span>
-                    <strong style="cursor:pointer;" onclick="setActiveId(${id})" title="Click to make Fiber #${id} active">Fiber ${id}</strong>
-                    <span class="chip-status ${statusClass}">${statusText}</span>
-                    <div style="display:inline-flex; align-items:center; flex-wrap:wrap; gap:3px;">${coordsHtml}</div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="chip-color-dot" style="background: ${color}; cursor:pointer;" onclick="setActiveId(${id})" title="Click to make Fiber #${id} active"></span>
+                        <strong style="cursor:pointer;" onclick="setActiveId(${id})" title="Click to make Fiber #${id} active">Fiber ${id}</strong>
+                        <span class="chip-status ${statusClass}">${statusText}</span>
+                    </div>
+                    <div style="display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px;">${coordsHtml}</div>
                     <button class="chip-del-btn" onclick="deleteFiberId(${id})" title="Delete entire Fiber #${id}">✕</button>
                 `;
                 container.appendChild(chip);
@@ -2055,23 +2446,22 @@ HTML_TEMPLATE = """
 
             try {
                 document.getElementById('perf-badge').innerText = '⏳ Resolving Geodesic Paths...';
+                const cropBounds = cropState.enabled ? [cropState.z_min, cropState.z_max, cropState.y_min, cropState.y_max, cropState.x_min, cropState.x_max] : null;
+
                 const res = await fetch('/api/resolve', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ seeds: seedsList })
+                    body: JSON.stringify({
+                        seeds: seedsList,
+                        crop_bounds: cropBounds
+                    })
                 });
                 const data = await res.json();
 
                 if (data.success) {
                     document.getElementById('perf-badge').innerText = `⚡ Resolved ${data.num_fibers} Fibers in ${data.resolve_time_ms} ms!`;
+                    updateSidebarInfo(undefined, undefined, undefined, `Resolved ${data.num_fibers} Fibers (${data.resolve_time_ms} ms)`);
                     renderThree3DCurves(data.curves_3d);
-
-                    document.getElementById('mip-xy').src = data.mip_results.inst_xy || data.mip_results.raw_xy;
-                    document.getElementById('mip-xz').src = data.mip_results.inst_xz || data.mip_results.raw_xz;
-                    document.getElementById('mip-yz').src = data.mip_results.inst_yz || data.mip_results.raw_yz;
-
-                    allSlicesCache = data.slices || [];
-                    handleSliceSlider(document.getElementById('slice-slider').value);
                 }
             } catch (err) {
                 console.error("Resolution failed:", err);
@@ -2099,30 +2489,7 @@ HTML_TEMPLATE = """
             }
         }
 
-        function handleSliceSlider(val) {
-            document.getElementById('slice-index-badge').innerHTML = `Z: <strong>${val} / 95</strong>`;
-            if (!allSlicesCache || allSlicesCache.length === 0) return;
-
-            const targetZ = parseInt(val);
-            let closest = allSlicesCache[0];
-            let minDiff = 999;
-            allSlicesCache.forEach(s => {
-                const diff = Math.abs(s.z - targetZ);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    closest = s;
-                }
-            });
-
-            if (closest) {
-                document.getElementById('slice-img-raw').src = closest.raw;
-                document.getElementById('slice-img-skel').src = closest.skel;
-                document.getElementById('slice-img-inst').src = closest.inst;
-            }
-        }
-
         window.addEventListener('keydown', (e) => {
-            // Do not trigger global hotkeys when typing inside inputs or select elements
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
                 if (e.code === 'Enter' && e.target.classList.contains('global-coord-input')) {
                     e.preventDefault();
@@ -2139,6 +2506,10 @@ HTML_TEMPLATE = """
                 saveAndNext();
             } else if (e.key === 'r' || e.key === 'R') {
                 fetchNewRandomPatch();
+            } else if (e.key === 'f' || e.key === 'F') {
+                focusActiveFiberCrop();
+            } else if (e.key === 'c' || e.key === 'C') {
+                toggleCropEnabled(!cropState.enabled);
             } else if (e.key >= '1' && e.key <= '9') {
                 setActiveId(parseInt(e.key));
             } else if (e.key === '0') {
@@ -2153,6 +2524,7 @@ HTML_TEMPLATE = """
         window.onload = async () => {
             initIdSelector();
             initThreeJS();
+            syncCropUI();
             await refreshSavedPatchesList();
             fetchNewRandomPatch();
         };
@@ -2203,6 +2575,22 @@ def api_load_patch_coords():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
+@app.route('/api/patch/crop', methods=['POST'])
+def api_crop_patch():
+    data = request.get_json() or {}
+    z_min = int(data.get('z_min', 0))
+    z_max = int(data.get('z_max', 95))
+    y_min = int(data.get('y_min', 0))
+    y_max = int(data.get('y_max', 95))
+    x_min = int(data.get('x_min', 0))
+    x_max = int(data.get('x_max', 95))
+    step = int(data.get('step', 4))
+    try:
+        crop_data = engine.get_cropped_view_data(z_min, z_max, y_min, y_max, x_min, x_max, step=step)
+        return jsonify(crop_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
 @app.route('/api/patches/list', methods=['GET'])
 def api_list_patches():
     return jsonify(engine.list_saved_patches())
@@ -2221,7 +2609,8 @@ def api_load_patch():
 def api_resolve():
     data = request.get_json() or {}
     seeds = data.get('seeds', [])
-    res = engine.resolve_connections(seeds)
+    crop_bounds = data.get('crop_bounds')
+    res = engine.resolve_connections(seeds, crop_bounds=crop_bounds)
     return jsonify(res)
 
 @app.route('/api/save', methods=['POST'])
