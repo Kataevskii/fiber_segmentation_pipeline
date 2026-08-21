@@ -227,7 +227,7 @@ class RealDataCurationEngine:
         inst_vol = np.zeros((S, S, S), dtype=np.uint16)
         clean_patch_bin = np.zeros((S, S, S), dtype=bool)
         ori_vol = np.zeros((3, S, S, S), dtype=np.float32)
-        intensity_target = np.full((S, S, S), -0.5, dtype=np.float32)
+        intensity_target = np.zeros((S, S, S), dtype=np.float32)
 
         if len(resolved_curves) > 0:
             # Gather all skeleton points and their fiber IDs
@@ -271,6 +271,8 @@ class RealDataCurationEngine:
                         g_cross = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * 1.5**2))
                         cross_pts = valid_fg[cross_mask]
                         intensity_target[cross_pts[:, 0], cross_pts[:, 1], cross_pts[:, 2]] -= 1.5 * g_cross
+
+                intensity_target = np.clip(intensity_target, -1.0, 1.0)
 
                 # Fast Analytical Orientation Field
                 for fid, curve in resolved_curves.items():

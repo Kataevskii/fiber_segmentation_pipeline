@@ -13,11 +13,12 @@ A complete deep learning and geometric graph optimization framework for high-res
 - [Interactive 3D Curation Web App & Engine](#-interactive-3d-curation-web-app--engine)
 - [Directory Structure](#-directory-structure)
 - [Quick Start & Usage Guide](#-quick-start--usage-guide)
-  - [1. 1-Click End-to-End Resolution](#1-1-click-end-to-end-resolution)
-  - [2. Run Sliding-Window Inference Only](#2-run-sliding-window-inference-only)
-  - [3. Run Topology Optimization Standalone](#3-run-topology-optimization-standalone)
-  - [4. Launch Interactive 3D Curation Web App](#4-launch-interactive-3d-curation-web-app)
-  - [5. Train Specialist Models](#5-train-specialist-models)
+  - [1. Dataset Precomputation](#1-dataset-precomputation)
+  - [2. Interactive 3D Curation Web App](#2-interactive-3d-curation-web-app)
+  - [3. Train Specialist Models](#3-train-specialist-models)
+  - [4. Run Sliding-Window Inference Only](#4-run-sliding-window-inference-only)
+  - [5. Run Topology Optimization Standalone](#5-run-topology-optimization-standalone)
+  - [6. 1-Click End-to-End Master Resolution](#6-1-click-end-to-end-master-resolution)
 
 ---
 
@@ -87,17 +88,22 @@ Subject to:
 
 ## 🔬 Why H-Junctions Occur and How They Are Resolved
 
-### The Topological Cause:
-When two thick 3D cylinders cross, their shared contact region is a diamond-shaped solid. During topological thinning, a 4-way ($X$) node is unstable in discrete cubic grids; thinning naturally collapses the diamond into **two 3-way ($Y$) nodes joined by a short transverse $H$-rung**.
+### The Topological Cause (Thinning of 3D Crossing Volumes):
+In continuous 3D space, ground-truth centerlines are simple, non-branching 1D curves. However, fibers have finite physical thickness. When two fibers cross or touch ($d < r_1 + r_2$), their voxelized cylinders merge into a 3D convex intersection solid (diamond). During discrete 3D thinning (e.g. Lee-Kashyap skeletonization on cubic grids), a 4-way ($X$) intersection point is topologically unstable. Thinning naturally collapses the diamond into **two 3-way ($Y$) branching nodes joined by a short transverse $H$-rung**.
 
-### The Solution:
-1. **Orientation-Decoupled Severing**:
+### Prevention via Smart Separable Stamping:
+In the data augmentation pipeline ([`core/dataset.py`](file:///C:/Users/Kataevskiy/Desktop/fiber_resolution_pipeline/core/dataset.py)), we enforce a **Centerline Separability Clearance Criterion**:
+- A candidate fiber stamp is accepted **only if its centerline maintains $\ge 6.0\text{ voxels}$ distance** from all existing fiber centerlines.
+- **Why 6 voxels?** With a $\sigma = 1.0$ Gaussian centerline profile ($I = +1.0$) and a $\sigma_{\text{cross}} = 1.5$ negative intersection dip ($I = -0.5$), a 6-voxel separation guarantees that the two positive centerline peaks remain distinct and separated by a negative energy valley, preventing synthetic $H$-junction formation.
+
+### Resolution in Topology Optimization:
+1. **Orientation-Decoupled Severing** ([`topology_optimizer/step1_sever_h_junctions.py`](file:///C:/Users/Kataevskiy/Desktop/fiber_resolution_pipeline/topology_optimizer/step1_sever_h_junctions.py)):
    If a short branch ($L \le 14\text{ vx}$) has a geometric direction perpendicular ($> 60^\circ$) to its adjacent fiber trunks:
    $$\text{Perpendicularity} = 1 - |\vec{D}_{\text{rung}} \cdot \vec{O}_{\text{trunk}}| > 0.50 \implies \text{SEVER}$$
-2. **Durable Endpoint Averaging**:
-   Instead of using the last 1–2 distorted skeleton voxels (which bend toward the cut junction), we average $\vec{O}(\vec{x})$ over the **nearest 5 voxels back into the fragment body**.
-3. **Collinear Continuation**:
-    After H-severing, the fragment endpoints are re-averaged from the cleaned skeleton. The KD-Tree then pairs matching collinear stems ($|\vec{O}_A \cdot \vec{O}_B| \ge 0.65$) across the 1–2 voxel intersection gap and stitches them straight through.
+2. **Durable Endpoint Averaging** ([`topology_optimizer/step3_build_fragment_graph.py`](file:///C:/Users/Kataevskiy/Desktop/fiber_resolution_pipeline/topology_optimizer/step3_build_fragment_graph.py)):
+   Instead of using distorted skeleton voxels at the cut interface, we average $\vec{O}(\vec{x})$ over the **nearest 5 voxels back into the fragment body**.
+3. **Collinear Continuation & Matching** ([`topology_optimizer/step2_bridge_gaps.py`](file:///C:/Users/Kataevskiy/Desktop/fiber_resolution_pipeline/topology_optimizer/step2_bridge_gaps.py), [`topology_optimizer/step4_optimize_topology.py`](file:///C:/Users/Kataevskiy/Desktop/fiber_resolution_pipeline/topology_optimizer/step4_optimize_topology.py)):
+   Candidate pairs across the 1–2 voxel intersection gap with high mutual collinearity ($|\vec{O}_A \cdot \vec{O}_B| \ge 0.65$) are stitched straight through under degree $\le 1$ constraints.
 
 ---
 
@@ -117,12 +123,13 @@ A WebGL-powered 3D annotation and geodesic solving suite located in `curation_to
 fiber_resolution_pipeline/
 ├── README.md                           # Master documentation
 ├── requirements.txt                    # Python package dependencies
+├── prepare_datasets.py                 # Precomputes memory-mapped NPY datasets & signed targets
 ├── run_end_to_end.py                   # 1-Click Master Runner (Inference + Optimization)
 │
 ├── core/
 │   ├── models.py                       # IntensityUNet3D & OrientationUNet3D architectures
 │   ├── losses.py                       # Foreground-Weighted MSE, Dice & Cosine losses
-│   └── dataset.py                      # 3D Morphological CT Augmentations & Copy-Paste Stamping
+│   └── dataset.py                      # 3D Morphological CT Augmentations & Separable Stamping (>= 6 vx)
 │
 ├── topology_optimizer/
 │   ├── cost_functions.py               # Modular fiber quality & bridging cost definitions
@@ -153,18 +160,65 @@ fiber_resolution_pipeline/
 
 ## 🚀 Quick Start & Usage Guide
 
-### 1. 1-Click End-to-End Resolution
-Runs GPU neural inference on raw microscopy and applies full topology optimization in a single command:
+### 1. Dataset Precomputation
+Precomputes analytical ground-truth orientation and signed probability fields from GAD geometry models into memory-mapped NPY format:
 
 ```bash
-python fiber_resolution_pipeline/run_end_to_end.py \
-    --input process_data/COLLAGENCROP_003_0000.tif \
-    --out outputs/collagen_resolved_final
+python prepare_datasets.py
 ```
 
 ---
 
-### 2. Run Sliding-Window Inference Only
+### 2. Interactive 3D Curation Web App
+Start the WebGL Three.js annotation server to inspect volumes, define seed waypoints, and curate real microscopy training blocks:
+
+```bash
+python curation_tool/app.py
+```
+Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser.
+
+---
+
+### 3. Train Specialist Models
+
+```bash
+# Train on ONLY real curated patches (no synthetic data)
+python training/train_both.py \
+    --real-only \
+    --train-on-all-data \
+    --pretrained \
+    --epochs 50 \
+    --patch-size 64 \
+    --batch-size 4
+
+# Train both specialist models sequentially with smart separable fiber stamping
+python training/train_both.py \
+    --epochs 20 \
+    --patch-size 64 \
+    --batch-size 2 \
+    --grad-accum-steps 2 \
+    --real-stamp-prob 0.25
+
+# Train Intensity Specialist ONLY (e.g. real only)
+python training/train_intensity.py \
+    --real-only \
+    --train-on-all-data \
+    --epochs 25 \
+    --patch-size 64 \
+    --batch-size 4
+
+# Train Orientation Specialist ONLY
+python training/train_orientation.py \
+    --real-only \
+    --train-on-all-data \
+    --epochs 25 \
+    --patch-size 64 \
+    --batch-size 4
+```
+
+---
+
+### 4. Run Sliding-Window Inference Only
 Generates continuous potential and tangent fields and saves them as `.npy` and `.tif`:
 
 ```bash
@@ -175,33 +229,33 @@ python inference/run_inference.py \
     --batch-size 4 \
     --output-prefix outputs/dual_collagen
 
-# Run Intensity Specialist ONLY (e.g. for centerline extraction or fast preview)
+# Run Intensity Specialist ONLY
 python inference/run_inference.py \
-    --input process_data/FULL_0000.tif \
+    --input process_data/COLLAGENCROP_003_0000.tif \
     --mode intensity \
-    --output-prefix outputs/full_intensity
+    --output-prefix outputs/intensity_only
 
-# Run Orientation Specialist ONLY (zero RAM overflow streamed architecture)
+# Run Orientation Specialist ONLY
 python inference/run_inference.py \
-    --input process_data/FULL_0000.tif \
+    --input process_data/COLLAGENCROP_003_0000.tif \
     --mode orientation \
-    --output-prefix outputs/full_orientation
+    --output-prefix outputs/orientation_only
 ```
 
 ---
 
-### 3. Run Topology Optimization Standalone
+### 5. Run Topology Optimization Standalone
 Optimizes topology directly from precomputed intensity and orientation fields using **direct whole-volume degree-1 linear assignment matching** (memory-mapped, zero false merges):
 
 ```bash
-# Recommended: Direct Global Optimization (degree <= 1, zero false merges)
+# Direct Global Optimization (degree <= 1, zero false merges)
 python inference/run_topology_optimization.py \
     --intensity outputs/dual_collagen_intensity.npy \
     --orientation outputs/dual_collagen_orientation.npy \
     --volume outputs/dual_collagen_volume.npy \
     --out outputs/topology_resolved_full
 
-# Optional: Chunked mode with 256-voxel overlap consensus
+# Optional: Chunked mode with overlap consensus
 python inference/run_topology_optimization.py \
     --intensity outputs/dual_collagen_intensity.npy \
     --orientation outputs/dual_collagen_orientation.npy \
@@ -214,22 +268,11 @@ python inference/run_topology_optimization.py \
 
 ---
 
-### 4. Launch Interactive 3D Curation Web App
-Start the WebGL annotation server:
+### 6. 1-Click End-to-End Master Resolution
+Runs GPU neural inference on raw microscopy and executes full topology optimization in a single command:
 
 ```bash
-python fiber_resolution_pipeline/curation_tool/app.py
-```
-Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser.
-
----
-
-### 5. Train Specialist Models
-```bash
-# Train both specialist models sequentially
-python training/train_both.py \
-    --epochs 20 \
-    --patch-size 64 \
-    --batch-size 2 \
-    --grad-accum-steps 2
+python run_end_to_end.py \
+    --input process_data/COLLAGENCROP_003_0000.tif \
+    --out outputs/collagen_resolved_final
 ```

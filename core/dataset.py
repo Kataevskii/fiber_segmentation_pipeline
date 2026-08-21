@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import tifffile
+from scipy.spatial import cKDTree
 
 def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=2, verbose=True):
     """
@@ -86,6 +87,176 @@ def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=
         print(f"Auto-extracted {newly_extracted} new individual fiber stamps from curated patch blocks into '{indiv_dir}'.", flush=True)
 
     return total_stamps
+
+
+def _augment_stamp(stamp_vol, stamp_int, stamp_ori):
+    """Randomly flips and rotates an individual fiber stamp of arbitrary 3D shape."""
+    s_vol = stamp_vol.copy()
+    s_int = stamp_int.copy()
+    s_ori = stamp_ori.copy()
+
+    # Ensure channel-first format for ori: (3, d, h, w)
+    if s_ori.ndim == 4 and s_ori.shape[-1] == 3 and s_ori.shape[0] != 3:
+        s_ori = np.transpose(s_ori, (3, 0, 1, 2)).copy()
+
+    # 1. Random 3D Flips
+    if random.random() > 0.5:
+        s_vol = np.flip(s_vol, axis=0).copy()
+        s_int = np.flip(s_int, axis=0).copy()
+        s_ori = np.flip(s_ori, axis=1).copy()
+        s_ori[0] = -s_ori[0]
+
+    if random.random() > 0.5:
+        s_vol = np.flip(s_vol, axis=1).copy()
+        s_int = np.flip(s_int, axis=1).copy()
+        s_ori = np.flip(s_ori, axis=2).copy()
+        s_ori[1] = -s_ori[1]
+
+    if random.random() > 0.5:
+        s_vol = np.flip(s_vol, axis=2).copy()
+        s_int = np.flip(s_int, axis=2).copy()
+        s_ori = np.flip(s_ori, axis=3).copy()
+        s_ori[2] = -s_ori[2]
+
+    # 2. Random 3D Orthogonal Rotations (using np.stack to accommodate rectangular stamps)
+    k_yx = random.randint(0, 3)
+    if k_yx > 0:
+        s_vol = np.rot90(s_vol, k=k_yx, axes=(1, 2)).copy()
+        s_int = np.rot90(s_int, k=k_yx, axes=(1, 2)).copy()
+        ori_z = np.rot90(s_ori[0], k=k_yx, axes=(1, 2)).copy()
+        ori_y = np.rot90(s_ori[1], k=k_yx, axes=(1, 2)).copy()
+        ori_x = np.rot90(s_ori[2], k=k_yx, axes=(1, 2)).copy()
+        if k_yx == 1:
+            s_ori = np.stack([ori_z, -ori_x, ori_y], axis=0)
+        elif k_yx == 2:
+            s_ori = np.stack([ori_z, -ori_y, -ori_x], axis=0)
+        elif k_yx == 3:
+            s_ori = np.stack([ori_z, ori_x, -ori_y], axis=0)
+
+    k_zx = random.randint(0, 3)
+    if k_zx > 0:
+        s_vol = np.rot90(s_vol, k=k_zx, axes=(0, 2)).copy()
+        s_int = np.rot90(s_int, k=k_zx, axes=(0, 2)).copy()
+        ori_z = np.rot90(s_ori[0], k=k_zx, axes=(0, 2)).copy()
+        ori_y = np.rot90(s_ori[1], k=k_zx, axes=(0, 2)).copy()
+        ori_x = np.rot90(s_ori[2], k=k_zx, axes=(0, 2)).copy()
+        if k_zx == 1:
+            s_ori = np.stack([-ori_x, ori_y, ori_z], axis=0)
+        elif k_zx == 2:
+            s_ori = np.stack([-ori_z, ori_y, -ori_x], axis=0)
+        elif k_zx == 3:
+            s_ori = np.stack([ori_x, ori_y, -ori_z], axis=0)
+
+    k_zy = random.randint(0, 3)
+    if k_zy > 0:
+        s_vol = np.rot90(s_vol, k=k_zy, axes=(0, 1)).copy()
+        s_int = np.rot90(s_int, k=k_zy, axes=(0, 1)).copy()
+        ori_z = np.rot90(s_ori[0], k=k_zy, axes=(0, 1)).copy()
+        ori_y = np.rot90(s_ori[1], k=k_zy, axes=(0, 1)).copy()
+        ori_x = np.rot90(s_ori[2], k=k_zy, axes=(0, 1)).copy()
+        if k_zy == 1:
+            s_ori = np.stack([-ori_y, ori_z, ori_x], axis=0)
+        elif k_zy == 2:
+            s_ori = np.stack([-ori_z, -ori_y, ori_x], axis=0)
+        elif k_zy == 3:
+            s_ori = np.stack([ori_y, -ori_z, ori_x], axis=0)
+
+    return s_vol, s_int, s_ori
+
+
+def stamp_fiber_if_separable(
+    vol_patch: np.ndarray,
+    int_patch: np.ndarray,
+    ori_patch: np.ndarray,
+    stamp_vol: np.ndarray,
+    stamp_int: np.ndarray,
+    stamp_ori: np.ndarray,
+    min_centerline_dist: float = 6.0,
+    max_attempts: int = 15,
+    intersection_dip: float = -0.5
+):
+    """
+    Pastes an individual fiber stamp onto a 3D patch ONLY if its centerline
+    remains separated by >= min_centerline_dist (default 6.0 voxels) from all
+    existing fiber centerlines in the patch.
+
+    This ensures that touching/grazing fiber bodies can intersect naturally
+    with a negative probability valley while strictly preventing centerline
+    merging or artificial X-crossing H-junctions.
+    """
+    D, H, W = vol_patch.shape
+    d, h, w = stamp_vol.shape
+
+    # Crop stamp if larger than destination patch
+    if d > D or h > H or w > W:
+        stamp_vol = stamp_vol[:min(d, D), :min(h, H), :min(w, W)]
+        stamp_int = stamp_int[:min(d, D), :min(h, H), :min(w, W)]
+        stamp_ori = stamp_ori[:, :min(d, D), :min(h, H), :min(w, W)]
+        d, h, w = stamp_vol.shape
+
+    # Extract existing centerlines (voxels with positive potential I > 0.5)
+    exist_cl_idx = np.where(int_patch > 0.5)
+    has_existing = len(exist_cl_idx[0]) > 0
+    exist_tree = cKDTree(np.column_stack(exist_cl_idx).astype(np.float32)) if has_existing else None
+
+    # Extract candidate stamp centerlines
+    stamp_cl_idx = np.where(stamp_int > 0.5)
+    if len(stamp_cl_idx[0]) == 0:
+        return vol_patch, int_patch, ori_patch, False
+
+    stamp_cl_coords = np.column_stack(stamp_cl_idx).astype(np.float32)
+
+    for _ in range(max_attempts):
+        z0 = random.randint(0, max(0, D - d))
+        y0 = random.randint(0, max(0, H - h))
+        x0 = random.randint(0, max(0, W - w))
+        offset = np.array([z0, y0, x0], dtype=np.float32)
+
+        # Centerline 6-voxel separability check
+        if exist_tree is not None:
+            stamp_cl_world = stamp_cl_coords + offset
+            dists, _ = exist_tree.query(stamp_cl_world, k=1)
+            if np.min(dists) < min_centerline_dist:
+                continue  # Rejected: centerlines closer than 6.0 voxels
+
+        # Accepted! Merge into patch
+        z1, y1, x1 = z0 + d, y0 + h, x0 + w
+        sub_vol = vol_patch[z0:z1, y0:y1, x0:x1]
+        sub_int = int_patch[z0:z1, y0:y1, x0:x1]
+        sub_ori = ori_patch[:, z0:z1, y0:y1, x0:x1]
+        # Identify body overlap regions (where outer fiber volumes touch)
+        overlap_mask = (sub_vol > 0) & (stamp_vol > 0)
+
+        # Merge binary volume
+        vol_patch[z0:z1, y0:y1, x0:x1] = (sub_vol > 0) | (stamp_vol > 0)
+
+        # Merge intensity field with continuous Gaussian intersection subtraction (consistent with GT generator)
+        merged_int = np.where(stamp_vol > 0, np.maximum(sub_int, stamp_int), sub_int)
+        if np.any(overlap_mask) and exist_tree is not None:
+            overlap_coords_sub = np.argwhere(overlap_mask)
+            overlap_coords_world = overlap_coords_sub.astype(np.float32) + offset
+
+            stamp_tree = cKDTree(stamp_cl_coords)
+            d1, _ = exist_tree.query(overlap_coords_world, k=1)
+            d2, _ = stamp_tree.query(overlap_coords_sub.astype(np.float32), k=1)
+
+            cross_mask = (d1 <= 3.5) & (d2 <= 3.5)
+            if np.any(cross_mask):
+                g_cross = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * 1.5**2))
+                pts = overlap_coords_sub[cross_mask]
+                merged_int[pts[:, 0], pts[:, 1], pts[:, 2]] -= 1.5 * g_cross
+
+        int_patch[z0:z1, y0:y1, x0:x1] = np.clip(merged_int, -1.0, 1.0)
+
+        # Merge orientation field
+        for c in range(3):
+            ori_patch[c, z0:z1, y0:y1, x0:x1] = np.where(
+                stamp_vol > 0, stamp_ori[c], sub_ori[c]
+            )
+
+        return vol_patch, int_patch, ori_patch, True
+
+    return vol_patch, int_patch, ori_patch, False
 
 
 def collect_dataset_triplets(data_dir):
@@ -354,6 +525,20 @@ class Fiber3DPatchDataset(Dataset):
         else:
             ori_patch = np.array(ori_mmap[z_start:z_end, y_start:y_end, x_start:x_end], dtype=np.float32)
             ori_patch = np.transpose(ori_patch, (3, 0, 1, 2)).copy()
+
+        # Smart Separable Fiber Stamping: Pastes curated fibers only if centerlines maintain >= 6.0 voxels distance
+        if self.augment and self.real_fibers and random.random() < self.real_stamp_prob:
+            num_stamps = random.randint(1, 2)
+            for _ in range(num_stamps):
+                r_vol, r_int, r_ori = random.choice(self.real_fibers)
+                s_vol, s_int, s_ori = _augment_stamp(r_vol, r_int, r_ori)
+                vol_patch, intensity_patch, ori_patch, _ = stamp_fiber_if_separable(
+                    vol_patch, intensity_patch, ori_patch,
+                    s_vol, s_int, s_ori,
+                    min_centerline_dist=6.0,
+                    max_attempts=15,
+                    intersection_dip=-0.5
+                )
 
         # Data Augmentations: Random 3D Flips and Orthogonal Rotations only
         if self.augment:

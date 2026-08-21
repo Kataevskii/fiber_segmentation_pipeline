@@ -82,6 +82,7 @@ def train_intensity_model(
     real_repeat=3,
     test_dir='test_data',
     train_on_all_data=False,
+    real_only=False,
     patch_size=64,
     batch_size=2,
     grad_accum_steps=2,
@@ -107,7 +108,12 @@ def train_intensity_model(
 
     print(f"  - Model Channels: {effective_base_channels} | Batch Size: {batch_size} | Epochs: {epochs}")
     print(f"  - Patch Size: {patch_size}x{patch_size}x{patch_size} | Samples/Epoch: {samples_per_epoch}")
-    if train_on_all_data:
+    if real_only:
+        if train_on_all_data:
+            print(f"  - Train Data: ONLY Real Curated Patches from {real_val_dir} (all patches; no synthetic data, no validation split)")
+        else:
+            print(f"  - Train Data: ONLY Real Curated Patches from {real_train_dir} (held-out real validation from {real_val_dir}; no synthetic data)")
+    elif train_on_all_data:
         print(f"  - Train Data: {data_dir} + {real_val_dir} (all real curated patches; no held-out validation)")
     else:
         print(f"  - Train Data: {data_dir} + {real_train_dir} x{real_repeat} (held-out real validation from {real_val_dir})")
@@ -122,7 +128,11 @@ def train_intensity_model(
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
     os.makedirs(os.path.dirname(figure_path) if os.path.dirname(figure_path) else 'outputs', exist_ok=True)
 
-    train_volume_paths, train_intensity_paths, train_orientation_paths = collect_dataset_triplets(data_dir)
+    if real_only:
+        train_volume_paths, train_intensity_paths, train_orientation_paths = [], [], []
+    else:
+        train_volume_paths, train_intensity_paths, train_orientation_paths = collect_dataset_triplets(data_dir)
+
     if train_on_all_data:
         real_triplets = collect_dataset_triplets(real_val_dir)
         train_volume_paths += real_triplets[0]
@@ -341,6 +351,9 @@ if __name__ == '__main__':
     parser.add_argument('--base-channels', type=int, default=24)
     parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--pretrained', type=str, default=None, help="Pretrained checkpoint path (default: None - train from scratch)")
+    parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
+    parser.add_argument('--train-on-all-data', action='store_true', help="Train on all real curated patches with no held-out validation")
+    parser.add_argument('--real-stamp-prob', type=float, default=0.0, help="Probability of stamping real fibers")
     parser.add_argument('--save-path', type=str, default='checkpoints/best_intensity_unet.pth')
     args = parser.parse_args()
 
@@ -353,6 +366,9 @@ if __name__ == '__main__':
         base_channels=args.base_channels,
         lr=args.lr,
         pretrained_path=args.pretrained,
+        train_on_all_data=args.train_on_all_data,
+        real_only=args.real_only,
+        real_stamp_prob=args.real_stamp_prob,
         save_path=args.save_path
     )
 
