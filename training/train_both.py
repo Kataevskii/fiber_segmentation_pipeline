@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--real-data-dir', type=str, default='real_train_data', help="Directory containing curated real fibers for real stamping")
     parser.add_argument('--real-stamp-prob', type=float, default=0.25, help="Probability of stamping real fibers into synthetic training patches")
     parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
+    parser.add_argument('--morph-on-the-fly', action='store_true', help="Augment GAD splines and morph real biological fibers on-the-fly")
     parser.add_argument('--real-repeat', type=int, default=3, help="How many times to repeat real curated training triplets relative to synthetic data")
     parser.add_argument('--train-on-all-data', action='store_true', help="Use all real curated patches for training and skip held-out real validation")
     parser.add_argument('--mode', type=str, choices=['both', 'intensity', 'orientation'], default='both',
@@ -50,7 +51,8 @@ def main():
             real_stamp_prob=args.real_stamp_prob,
             real_repeat=args.real_repeat,
             train_on_all_data=args.train_on_all_data,
-            real_only=args.real_only
+            real_only=args.real_only,
+            morph_on_the_fly=args.morph_on_the_fly
         )
 
     if args.mode in ['both', 'orientation']:
@@ -70,7 +72,8 @@ def main():
             real_stamp_prob=args.real_stamp_prob,
             real_repeat=args.real_repeat,
             train_on_all_data=args.train_on_all_data,
-            real_only=args.real_only
+            real_only=args.real_only,
+            morph_on_the_fly=args.morph_on_the_fly
         )
 
     print("\n" + "=" * 80)

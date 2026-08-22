@@ -39,10 +39,12 @@ class FiberFragment:
     length: int = 0
 
     # Endpoint A (arbitrary which is head/tail -- the optimizer handles polarity)
-    head_coord: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    tail_coord: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    head_ori:   np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
-    tail_ori:   np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    head_coord:   np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    tail_coord:   np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    head_ori:     np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    tail_ori:     np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    head_tangent: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    tail_tangent: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
 
     def __post_init__(self):
         self.length = len(self.coords)
@@ -99,17 +101,18 @@ def build_fragment_graph(
         print(f"  [graph] {n_segs} raw segments before length filtering.", flush=True)
 
     # ------------------------------------------------------------------ #
-    # Step 2: collect non-zero voxel coords & filter by length           #
+    # Step 2: collect non-zero voxel coords & filter by length/collinearity #
     # ------------------------------------------------------------------ #
     vox_z, vox_y, vox_x = np.where(seg_labels_raw > 0)
     vox_ids = seg_labels_raw[vox_z, vox_y, vox_x]
 
     seg_sizes = np.bincount(vox_ids, minlength=n_segs + 1)
-    valid_ids = np.where(seg_sizes >= min_fragment_length)[0]
+    
+    # Keep fragments if length >= min_fragment_length OR if length >= 1 (preserves collinear pieces)
+    valid_ids = np.where(seg_sizes >= max(1, min_fragment_length))[0]
     valid_ids = valid_ids[valid_ids > 0]
 
-    # Only keep voxels belonging to valid segments. Set min_fragment_length=1
-    # to preserve all post-H-sever fragments for later reconnection.
+    # Keep voxels belonging to valid segments
     keep_mask = np.isin(vox_ids, valid_ids)
     vox_z  = vox_z[keep_mask]
     vox_y  = vox_y[keep_mask]
@@ -201,28 +204,63 @@ def build_fragment_graph(
             head_coord_raw = np.array([cz[0],  cy[0],  cx[0]],  dtype=np.float32)
             tail_coord_raw = np.array([cz[-1], cy[-1], cx[-1]], dtype=np.float32)
 
-        # Durable endpoint orientations: average k nearest voxels to each endpoint
+        # Durable endpoint orientations: 3D volumetric majority voting via Nematic Tensor
+        # Sampled 5 voxels inside the body to completely avoid crossing/junction interference
         all_pts = np.column_stack([cz, cy, cx]).astype(np.float32)
 
-        def avg_ori_near(ep_coord, k=endpoint_avg_k):
+        def get_volumetric_consensus_ori(ep_coord, offset_k=endpoint_avg_k, radius=2):
             dists = np.sum((all_pts - ep_coord) ** 2, axis=1)
-            nearest = np.argpartition(dists, min(k, n) - 1)[:min(k, n)]
-            avg = oris[nearest].mean(axis=0)
-            nrm = np.linalg.norm(avg)
-            return avg / nrm if nrm > 1e-8 else oris[0]
+            sorted_idx = np.argsort(dists)
+            
+            # Anchor 5 voxels inside body
+            anchor_idx = sorted_idx[min(offset_k, n - 1)]
+            anchor = all_pts[anchor_idx]
+            
+            az, ay, ax = int(anchor[0]), int(anchor[1]), int(anchor[2])
+            z0, z1 = max(0, az - radius), min(D, az + radius + 1)
+            y0, y1 = max(0, ay - radius), min(H, ay + radius + 1)
+            x0, x1 = max(0, ax - radius), min(W, ax + radius + 1)
+            
+            sub_oz = ori_z[z0:z1, y0:y1, x0:x1].ravel()
+            sub_oy = ori_y[z0:z1, y0:y1, x0:x1].ravel()
+            sub_ox = ori_x[z0:z1, y0:y1, x0:x1].ravel()
+            
+            vecs = np.column_stack([sub_oz, sub_oy, sub_ox]).astype(np.float32)
+            nrms = np.linalg.norm(vecs, axis=1, keepdims=True)
+            nrms[nrms < 1e-8] = 1.0
+            vecs /= nrms
+            
+            # Nematic Second-Moment Tensor T = sum(v * v^T)
+            T = np.einsum('ni,nj->ij', vecs, vecs)
+            _, evecs = np.linalg.eigh(T)
+            consensus_ori = evecs[:, -1].astype(np.float32) # dominant eigenvector
+            
+            # Outward sign deduction from body anchor through endpoint into free space
+            v_out = ep_coord - anchor
+            norm_out = np.linalg.norm(v_out)
+            if norm_out > 1e-4:
+                if np.dot(consensus_ori, v_out) < 0:
+                    consensus_ori = -consensus_ori
+                tan_v = (v_out / norm_out).astype(np.float32)
+            else:
+                tan_v = consensus_ori
+                
+            return consensus_ori, tan_v
 
-        head_ori_v = avg_ori_near(head_coord_raw)
-        tail_ori_v = avg_ori_near(tail_coord_raw)
+        head_ori_v, head_tangent_v = get_volumetric_consensus_ori(head_coord_raw)
+        tail_ori_v, tail_tangent_v = get_volumetric_consensus_ori(tail_coord_raw)
 
         frag = FiberFragment(
             frag_id=new_id,
             coords=coords,
             oris=oris,
         )
-        frag.head_coord = head_coord_raw
-        frag.tail_coord = tail_coord_raw
-        frag.head_ori   = head_ori_v
-        frag.tail_ori   = tail_ori_v
+        frag.head_coord   = head_coord_raw
+        frag.tail_coord   = tail_coord_raw
+        frag.head_ori     = head_ori_v
+        frag.tail_ori     = tail_ori_v
+        frag.head_tangent = head_tangent_v
+        frag.tail_tangent = tail_tangent_v
 
         fragments.append(frag)
         seg_labels[cz, cy, cx] = new_id

@@ -106,144 +106,30 @@ class RealFiberInstance:
 
 class RealFiberLibrary:
     """Library of extracted continuous real fibers from curated patches."""
-    def __init__(self, curated_dir='data/curated/patches', cache_path='data/curated/fiber_library.pkl', min_length=75, allowed_patches=None, force_rebuild=False):
+    def __init__(self, curated_dir='real_train_data/curated_patches', cache_path='real_train_data/fiber_library.pkl', min_length=45):
         self.curated_dir = curated_dir
         self.cache_path = cache_path
         self.min_length = min_length
-        self.allowed_patches = allowed_patches
         self.fibers = []
-        self.load_or_build_library(force_rebuild=force_rebuild)
+        self.load_or_build_library()
 
-    def _is_intact_through_fiber(self, ordered_curve, cube_size=96, radius_margin=3.5):
-        """
-        Validates that a fiber is an intact through-volume fiber using orientation and boundary geometry:
-        1. Both endpoints cleanly penetrate distinct boundary faces with transverse angles (|T_normal| >= 0.20).
-        2. The interior trunk NEVER runs parallel along any bounding face (|T_normal| < 0.35 within radius_margin).
-           This explicitly excludes fibers that were sliced longitudinally along their trunk by the cube boundary.
-        3. Arc length >= self.min_length.
-        """
-        N = len(ordered_curve)
-        if N < 15:
-            return False
-
-        segs = np.linalg.norm(np.diff(ordered_curve, axis=0), axis=1)
-        total_len = float(np.sum(segs))
-        if total_len < self.min_length:
-            return False
-
-        tangents = np.zeros_like(ordered_curve, dtype=np.float32)
-        tangents[0] = ordered_curve[1] - ordered_curve[0]
-        tangents[-1] = ordered_curve[-1] - ordered_curve[-2]
-        tangents[1:-1] = (ordered_curve[2:] - ordered_curve[:-2]) / 2.0
-        norms = np.linalg.norm(tangents, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        tangents /= norms
-
-        faces = [
-            ('z_min', 0, 0.0), ('z_max', 0, cube_size - 1.0),
-            ('y_min', 1, 0.0), ('y_max', 1, cube_size - 1.0),
-            ('x_min', 2, 0.0), ('x_max', 2, cube_size - 1.0)
-        ]
-
-        # 1. Interior trunk check: reject if parallel and touching any border
-        start_m = max(3, int(0.06 * N))
-        end_m = N - start_m
-        interior_idx = np.arange(start_m, end_m)
-        for face_name, axis, val in faces:
-            dists = np.abs(ordered_curve[:, axis] - val)
-            t_norm = np.abs(tangents[:, axis])
-            # If trunk touches the border face AND runs parallel to it, it was sliced along the trunk
-            if np.sum((dists[interior_idx] <= radius_margin) & (t_norm[interior_idx] < 0.35)) >= 3:
-                return False
-
-        # 2. Endpoint check: entrance and exit must touch different boundary faces cleanly
-        p0, p1 = ordered_curve[0], ordered_curve[-1]
-        t0, t1 = tangents[0], tangents[-1]
-
-        def check_endpoint(p, t):
-            best_f = None
-            min_d = 999.0
-            norm_c = 0.0
-            for name, axis, val in faces:
-                d = abs(p[axis] - val)
-                if d < min_d:
-                    min_d = d
-                    best_f = name
-                    norm_c = abs(t[axis])
-            if min_d <= 2.5 and norm_c >= 0.20:
-                return best_f
-            return None
-
-        face_start = check_endpoint(p0, t0)
-        face_end = check_endpoint(p1, t1)
-
-        if not face_start or not face_end or face_start == face_end:
-            return False
-
-        return True
-
-    def load_or_build_library(self, force_rebuild=False):
-        if not force_rebuild and os.path.exists(self.cache_path):
+    def load_or_build_library(self):
+        if os.path.exists(self.cache_path):
             try:
                 with open(self.cache_path, 'rb') as f:
                     self.fibers = pickle.load(f)
-                if self.allowed_patches is not None:
-                    allowed_set = {int(p) if str(p).isdigit() else p for p in self.allowed_patches}
-                    allowed_names = {f"patch_{int(p):04d}" if str(p).isdigit() else str(p) for p in self.allowed_patches}
-                    self.fibers = [
-                        f for f in self.fibers
-                        if f.patch_index in allowed_set or f"patch_{f.patch_index:04d}" in allowed_names
-                    ]
                 if self.fibers:
-                    intact_count = sum(1 for f in self.fibers if f.is_boundary_continuous)
-                    print(f"Loaded {len(self.fibers)} continuous real fibers from cache '{self.cache_path}' ({intact_count} intact through-volume).", flush=True)
+                    print(f"Loaded {len(self.fibers)} continuous real fibers from cache '{self.cache_path}'.", flush=True)
                     return
             except Exception:
                 pass
 
-        # Auto-detect allowed patches from individual_fibers if allowed_patches not provided
-        allowed_names = None
-        allowed_set = None
-        if self.allowed_patches is not None:
-            allowed_set = {int(p) if str(p).isdigit() else p for p in self.allowed_patches}
-            allowed_names = {f"patch_{int(p):04d}" if str(p).isdigit() else str(p) for p in self.allowed_patches}
-        else:
-            indiv_dir = (
-                os.path.join(os.path.dirname(self.curated_dir), 'individual_fibers')
-                if os.path.basename(self.curated_dir) == 'patches'
-                else os.path.join(self.curated_dir, 'individual_fibers')
-            )
-            if os.path.exists(indiv_dir):
-                extracted = set(
-                    f.split('_fiber_')[0]
-                    for f in os.listdir(indiv_dir)
-                    if '_fiber_' in f and f.endswith('_vol.npy')
-                )
-                if extracted:
-                    allowed_names = extracted
-                    allowed_set = {
-                        int(p.split('_')[1])
-                        for p in extracted
-                        if '_' in p and p.split('_')[1].isdigit()
-                    }
-
         print(f"Building real fiber library from '{self.curated_dir}'...", flush=True)
         self.fibers = []
-
-        if not os.path.exists(self.curated_dir):
-            return
 
         meta_files = sorted([f for f in os.listdir(self.curated_dir) if f.startswith('patch_') and f.endswith('_meta.json')])
         for mf in meta_files:
             p_idx = int(mf.split('_')[1].split('.')[0])
-            p_name = f"patch_{p_idx:04d}"
-
-            # Only extract fibers from allowed/extracted donor patches
-            if allowed_set is not None or allowed_names is not None:
-                is_allowed = (allowed_set is not None and p_idx in allowed_set) or (allowed_names is not None and p_name in allowed_names)
-                if not is_allowed:
-                    continue
-
             m_path = os.path.join(self.curated_dir, mf)
             inst_path = os.path.join(self.curated_dir, f"patch_{p_idx:04d}_instance.npy")
             skel_path = os.path.join(self.curated_dir, f"patch_{p_idx:04d}_centerline.npy")
@@ -268,12 +154,10 @@ class RealFiberLibrary:
                 if len(ordered_curve) < self.min_length:
                     continue
 
-                # Check export metadata quality tag first, fallback to geometric evaluation
-                q_meta = meta.get('fiber_quality', {}).get(str(fid))
-                if q_meta is not None:
-                    is_boundary = bool(q_meta.get('is_valid_donor', False))
-                else:
-                    is_boundary = self._is_intact_through_fiber(ordered_curve, cube_size=cube_size, radius_margin=3.5)
+                p_start, p_end = ordered_curve[0], ordered_curve[-1]
+                touches_start = any(p_start <= 1) or any(p_start >= cube_size - 2)
+                touches_end = any(p_end <= 1) or any(p_end >= cube_size - 2)
+                is_boundary = bool(touches_start and touches_end)
 
                 fiber_mask = (inst_vol == fid)
                 z_idx, y_idx, x_idx = np.where(fiber_mask)
@@ -295,8 +179,7 @@ class RealFiberLibrary:
                 )
                 self.fibers.append(inst)
 
-        intact_count = sum(1 for f in self.fibers if f.is_boundary_continuous)
-        print(f"Built library with {len(self.fibers)} real fiber instances ({intact_count} intact through-volume).", flush=True)
+        print(f"Built library with {len(self.fibers)} real fiber instances ({sum(1 for f in self.fibers if f.is_boundary_continuous)} boundary-continuous).", flush=True)
         os.makedirs(os.path.dirname(self.cache_path) if os.path.dirname(self.cache_path) else '.', exist_ok=True)
         try:
             with open(self.cache_path, 'wb') as f:
@@ -441,12 +324,8 @@ def deform_real_fiber_along_spline(real_fiber, target_curve, dest_shape=(64, 64,
     u = np.sum(diffs * proj_N, axis=1)
     v = np.sum(diffs * proj_B, axis=1)
 
-    # Map arc length to real fiber: 1:1 isometric mapping when possible to prevent distortion
-    if t_len <= real_fiber.total_length:
-        offset = float(np.random.uniform(0.0, real_fiber.total_length - t_len))
-        r_arc_target = offset + proj_arcs
-    else:
-        r_arc_target = (proj_arcs / t_len) * real_fiber.total_length
+    # Map arc length to real fiber
+    r_arc_target = (proj_arcs / t_len) * real_fiber.total_length
 
     r_cum = real_fiber.cum_arc
     r_curve = real_fiber.curve
@@ -465,14 +344,6 @@ def deform_real_fiber_along_spline(real_fiber, target_curve, dest_shape=(64, 64,
     src_coords = r_pos + u[:, None] * r_N_interp + v[:, None] * r_B_interp
 
     sampled_vals = map_coordinates(real_fiber.mask, src_coords.T, order=1, mode='constant', cval=0.0)
-
-    # Clean endpoint clipping: voxels strictly beyond curve start/end plane do not extrude
-    if len(target_curve) >= 2:
-        t_start, t_end = target_curve[0], target_curve[-1]
-        tan_start, tan_end = t_T[0], t_T[-1]
-        past_start = np.sum((pts_to_sample - t_start) * (-tan_start), axis=1) > 0.5
-        past_end = np.sum((pts_to_sample - t_end) * tan_end, axis=1) > 0.5
-        sampled_vals[past_start | past_end] = 0.0
 
     dest_vol = np.zeros(dest_shape, dtype=bool)
     fg_mask = (sampled_vals > 0.40)

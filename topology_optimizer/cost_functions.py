@@ -159,22 +159,24 @@ def bridge_cost(
     seg_b_head_ori: np.ndarray,
     gap_distance: float,
     path_ori_samples: np.ndarray | None = None,
+    forward_align_a: float | None = None,
+    forward_align_b: float | None = None,
 ) -> float:
     """
     Cost of bridging two segment endpoints across an empty gap.
 
     Parameters
     ----------
-    seg_a_tail_ori   : (3,) float -- orientation at the tail of segment A
-    seg_b_head_ori   : (3,) float -- orientation at the head of segment B
+    seg_a_tail_ori   : (3,) float -- orientation/tangent at endpoint of segment A
+    seg_b_head_ori   : (3,) float -- orientation/tangent at endpoint of segment B
     gap_distance     : float -- Euclidean distance of the gap in voxels
-    path_ori_samples : (K, 3) float or None -- orientation field sampled along
-                       the gap path. If provided, used for durable alignment check.
+    path_ori_samples : (K, 3) float or None -- orientation field sampled along the gap path
+    forward_align_a  : float or None -- cos(theta_A) turning angle from fragment A into gap
+    forward_align_b  : float or None -- cos(theta_B) turning angle from gap into fragment B
 
     Returns
     -------
     float -- cost of this bridge (lower = better match)
-             Returns +inf if the bridge is geometrically inadmissible.
     """
     # Polarity-invariant mutual alignment
     mutual_dot = float(np.dot(seg_a_tail_ori, seg_b_head_ori))
@@ -183,23 +185,30 @@ def bridge_cost(
     # Orientation dip at the join
     ori_change = junction_orientation_change_cost(seg_a_tail_ori, seg_b_head_ori)
 
+    # Turn penalties and hard sharp bend check
+    turn_penalty = 0.0
+    if forward_align_a is not None and forward_align_b is not None:
+        theta_a = float(np.arccos(np.clip(forward_align_a, -1.0, 1.0)))
+        theta_b = float(np.arccos(np.clip(forward_align_b, -1.0, 1.0)))
+        turn_penalty += WEIGHT_CURVATURE * (theta_a + theta_b)
+        if theta_a > SHARP_ANGLE_THRESHOLD or theta_b > SHARP_ANGLE_THRESHOLD:
+            turn_penalty += SHARP_ANGLE_PENALTY
+
     # If we have samples along the gap path, check they all agree with direction
     durable_penalty = 0.0
     if path_ori_samples is not None and len(path_ori_samples) > 0:
-        # Average orientation along the gap
         mean_gap_ori = path_ori_samples.mean(axis=0)
         norm = np.linalg.norm(mean_gap_ori)
         if norm > 1e-8:
             mean_gap_ori /= norm
             gap_align_a = abs(float(np.dot(seg_a_tail_ori, mean_gap_ori)))
             gap_align_b = abs(float(np.dot(seg_b_head_ori, mean_gap_ori)))
-            # Penalise if orientation along the gap doesn't agree with endpoints
             durable_penalty = WEIGHT_JUNCTION_ORI_CHANGE * (
                 max(0.0, 0.70 - gap_align_a)
               + max(0.0, 0.70 - gap_align_b)
             ) * 10.0
 
-    total = gap_cost(gap_distance) + ori_change + durable_penalty
+    total = gap_cost(gap_distance) + ori_change + turn_penalty + durable_penalty
     return total
 
 

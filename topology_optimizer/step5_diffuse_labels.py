@@ -27,7 +27,7 @@ def build_labeled_skeleton(
     chains: list[FiberChain],
     seg_labels: np.ndarray | None,
     volume_shape: tuple[int, int, int],
-    min_chain_length: int = 25,
+    min_chain_length: int = 1,
     out_skel_mmap: np.ndarray | None = None
 ) -> tuple[np.ndarray, int]:
     """
@@ -76,7 +76,7 @@ def build_labeled_skeleton(
         if chain_label == 0:
             continue
         for (coord_a, coord_b) in chain.bridge_coords:
-            n_steps = max(2, int(np.ceil(np.linalg.norm(coord_b - coord_a))) * 2)
+            n_steps = max(2, int(np.ceil(np.linalg.norm(coord_b - coord_a))) * 4)
             t_vals = np.linspace(0, 1, n_steps)
             bz = np.clip(np.round(coord_a[0] + t_vals * (coord_b[0] - coord_a[0])).astype(int), 0, D - 1)
             by = np.clip(np.round(coord_a[1] + t_vals * (coord_b[1] - coord_a[1])).astype(int), 0, H - 1)

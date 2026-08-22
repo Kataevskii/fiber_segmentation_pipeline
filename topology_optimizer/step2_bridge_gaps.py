@@ -88,21 +88,31 @@ def find_bridge_candidates(
     # Build array of all fragment endpoints (2 per fragment)             #
     # ------------------------------------------------------------------ #
     ep_coords = []
-    ep_oris = []
+    ep_oris_out = []
     ep_meta = []  # (frag_id, 'head'/'tail')
 
     for frag in fragments:
+        # Head: sign-align predicted orientation field outward
+        tan_h = getattr(frag, 'head_tangent', frag.head_ori)
+        ori_h = frag.head_ori
+        ori_h_out = ori_h if np.dot(ori_h, tan_h) >= 0 else -ori_h
+
         ep_coords.append(frag.head_coord)
-        ep_oris.append(frag.head_ori)
+        ep_oris_out.append(ori_h_out)
         ep_meta.append((frag.frag_id, 'head'))
 
+        # Tail: sign-align predicted orientation field outward
+        tan_t = getattr(frag, 'tail_tangent', frag.tail_ori)
+        ori_t = frag.tail_ori
+        ori_t_out = ori_t if np.dot(ori_t, tan_t) >= 0 else -ori_t
+
         ep_coords.append(frag.tail_coord)
-        ep_oris.append(frag.tail_ori)
+        ep_oris_out.append(ori_t_out)
         ep_meta.append((frag.frag_id, 'tail'))
 
-    ep_coords = np.array(ep_coords, dtype=np.float32)
-    ep_oris   = np.array(ep_oris, dtype=np.float32)
-    num_eps   = len(ep_coords)
+    ep_coords   = np.array(ep_coords, dtype=np.float32)
+    ep_oris_out = np.array(ep_oris_out, dtype=np.float32)
+    num_eps     = len(ep_coords)
 
     if verbose:
         print(f"  [bridge] {num_eps} fragment endpoints from {len(fragments)} fragments. "
@@ -124,8 +134,8 @@ def find_bridge_candidates(
 
         coord_a = ep_coords[i]
         coord_b = ep_coords[j]
-        ori_a   = ep_oris[i]
-        ori_b   = ep_oris[j]
+        ori_a   = ep_oris_out[i]
+        ori_b   = ep_oris_out[j]
 
         gap_vec  = coord_b - coord_a
         gap_dist = float(np.linalg.norm(gap_vec))
@@ -136,21 +146,18 @@ def find_bridge_candidates(
         else:
             gap_dir = gap_vec / gap_dist
 
-        # ---- Mutual alignment (polarity-invariant) ------------------- #
+        # ---- Directional Alignment from Predicted Orientation Field ---- #
+        # Forward continuation leaving fragment A along predicted orientation into gap_dir
+        cos_turn_a = float(np.dot(ori_a, gap_dir))
+        # Forward continuation entering fragment B along gap_dir into (-ori_b)
+        cos_turn_b = float(np.dot(gap_dir, -ori_b))
+        # Mutual alignment between the predicted orientation vectors
         mutual_align = float(abs(np.dot(ori_a, ori_b)))
+
+        # Permissive candidate filter: retain candidates for soft cost scoring
         if mutual_align < mutual_thresh:
             continue
-
-        # ---- Forward alignment (orient vectors to point into gap) ---- #
-        d_a = ori_a if float(np.dot(ori_a, gap_dir)) >= 0 else -ori_a
-        d_b_toward_a = ori_b if float(np.dot(ori_b, -gap_dir)) >= 0 else -ori_b
-
-        fwd_a = float(np.dot(gap_dir, d_a))
-        fwd_b = float(np.dot(-gap_dir, d_b_toward_a))
-
-        # For very short gaps (<= 3 vx), relax forward threshold slightly
-        eff_fwd_thresh = forward_thresh if gap_dist > 3.0 else (forward_thresh - 0.15)
-        if fwd_a < eff_fwd_thresh or fwd_b < eff_fwd_thresh:
+        if cos_turn_a < -0.30 or cos_turn_b < -0.30:
             continue
 
         # ---- Durable alignment along gap path ------------------------ #
@@ -175,7 +182,7 @@ def find_bridge_candidates(
             if durable_fraction < durable_min_fraction:
                 continue
         else:
-            path_oris = np.stack([d_a, d_b_toward_a], axis=0)
+            path_oris = np.stack([ori_a, -ori_b], axis=0)
             durable_fraction = 1.0
 
         cand = BridgeCandidate(
@@ -185,12 +192,12 @@ def find_bridge_candidates(
             end_b=end_b,
             coord_a=coord_a,
             coord_b=coord_b,
-            ori_a=d_a,
-            ori_b=d_b_toward_a,
+            ori_a=ori_a,
+            ori_b=-ori_b,
             gap_distance=gap_dist,
             mutual_align=mutual_align,
-            forward_align_a=fwd_a,
-            forward_align_b=fwd_b,
+            forward_align_a=cos_turn_a,
+            forward_align_b=cos_turn_b,
             durable_fraction=durable_fraction,
             path_ori_samples=path_oris,
         )

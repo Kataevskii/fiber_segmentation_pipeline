@@ -107,7 +107,7 @@ class OrientationLoss(nn.Module):
             mean_angle_rad = torch.acos(torch.clamp(mean_dot, 0.0, 1.0))
             mean_angle_deg = mean_angle_rad * (180.0 / torch.pi)
         else:
-            ori_loss = torch.tensor(0.0, device=pred_dir.device)
+            ori_loss = (pred_dir * 0.0).sum()
             mean_angle_deg = torch.tensor(0.0, device=pred_dir.device)
 
         metrics = {

@@ -41,7 +41,8 @@ def predict_sliding_window(
     batch_size=4,
     desc="Inference",
     temp_dir=None,
-    chunk_size=32
+    chunk_size=32,
+    show_pbar=True
 ):
     """3D sliding window inference with batched GPU acceleration, smooth Gaussian patch blending,
     and disk-backed memory-mapped accumulators with chunked normalization to eliminate RAM overflows.
@@ -94,12 +95,16 @@ def predict_sliding_window(
     total_patches = len(coords)
 
     model.eval()
-    pbar = tqdm(
-        range(0, total_patches, batch_size),
-        desc=f"  {desc} ({total_patches} patches)",
-        unit="batch",
-        ncols=95
-    )
+    if show_pbar:
+        pbar = tqdm(
+            range(0, total_patches, batch_size),
+            desc=f"  {desc} ({total_patches} patches)",
+            unit="batch",
+            ncols=95,
+            leave=False
+        )
+    else:
+        pbar = range(0, total_patches, batch_size)
 
     with torch.no_grad():
         for b_idx in pbar:
@@ -119,7 +124,8 @@ def predict_sliding_window(
                 output_sum[:, z:z+patch_size, y:y+patch_size, x:x+patch_size] += preds_np[i] * gaussian_weight
                 count_map[:, z:z+patch_size, y:y+patch_size, x:x+patch_size] += gaussian_weight
 
-            pbar.set_postfix({'Done': f"{min(b_idx + batch_size, total_patches)}/{total_patches} ({min(100.0, (b_idx + batch_size)/total_patches*100):.1f}%)"})
+            if show_pbar:
+                pbar.set_postfix({'Done': f"{min(b_idx + batch_size, total_patches)}/{total_patches} ({min(100.0, (b_idx + batch_size)/total_patches*100):.1f}%)"})
 
     del vol_padded
     gc.collect()

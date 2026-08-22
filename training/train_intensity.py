@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from core.models import IntensityUNet3D, infer_base_channels_from_checkpoint
 from core.losses import IntensityLoss
-from core.dataset import Fiber3DPatchDataset, collect_dataset_triplets, split_real_validation_triplets
+from core.dataset import Fiber3DPatchDataset, OnTheFlyMorphedDataset, collect_dataset_triplets, split_real_validation_triplets
 from inference.run_inference import predict_sliding_window
 
 
@@ -36,9 +36,8 @@ def _evaluate_full_volume_dice(model, loss_fn, volume_paths, intensity_paths, de
 
     with torch.no_grad():
         for index, (v_path, i_path) in enumerate(zip(volume_paths, intensity_paths)):
-            volume = _load_array(v_path)
-            gt_intensity = np.asarray(_load_array(i_path), dtype=np.float32)
-            volume = np.asarray(volume, dtype=np.float32)
+            volume = np.array(_load_array(v_path), dtype=np.float32, copy=True)
+            gt_intensity = np.array(_load_array(i_path), dtype=np.float32, copy=True)
 
             out_path = os.path.join(temp_dir, f"_val_intensity_{index}_{os.getpid()}.npy")
             pred_mmap = predict_sliding_window(
@@ -53,6 +52,7 @@ def _evaluate_full_volume_dice(model, loss_fn, volume_paths, intensity_paths, de
                 desc=f"Val Crop {index + 1}",
                 temp_dir=temp_dir,
                 chunk_size=patch_size,
+                show_pbar=False
             )
 
             pred_volume = np.array(pred_mmap, dtype=np.float32, copy=True)
@@ -83,6 +83,7 @@ def train_intensity_model(
     test_dir='test_data',
     train_on_all_data=False,
     real_only=False,
+    morph_on_the_fly=False,
     patch_size=64,
     batch_size=2,
     grad_accum_steps=2,
@@ -108,7 +109,9 @@ def train_intensity_model(
 
     print(f"  - Model Channels: {effective_base_channels} | Batch Size: {batch_size} | Epochs: {epochs}")
     print(f"  - Patch Size: {patch_size}x{patch_size}x{patch_size} | Samples/Epoch: {samples_per_epoch}")
-    if real_only:
+    if morph_on_the_fly:
+        print(f"  - Train Data: ON-THE-FLY DYNAMIC MORPHING (Augment GAD splines -> Morph Real Fibers)")
+    elif real_only:
         if train_on_all_data:
             print(f"  - Train Data: ONLY Real Curated Patches from {real_val_dir} (all patches; no synthetic data, no validation split)")
         else:
@@ -128,42 +131,57 @@ def train_intensity_model(
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
     os.makedirs(os.path.dirname(figure_path) if os.path.dirname(figure_path) else 'outputs', exist_ok=True)
 
-    if real_only:
-        train_volume_paths, train_intensity_paths, train_orientation_paths = [], [], []
-    else:
-        train_volume_paths, train_intensity_paths, train_orientation_paths = collect_dataset_triplets(data_dir)
-
-    if train_on_all_data:
-        real_triplets = collect_dataset_triplets(real_val_dir)
-        train_volume_paths += real_triplets[0]
-        train_intensity_paths += real_triplets[1]
-        train_orientation_paths += real_triplets[2]
-        val_volume_paths, val_intensity_paths, val_orientation_paths = [], [], []
-    else:
-        real_train_triplets, real_val_triplets = split_real_validation_triplets(real_val_dir)
-        real_repeat = max(1, int(real_repeat))
-        real_train_triplets = (
-            real_train_triplets[0] * real_repeat,
-            real_train_triplets[1] * real_repeat,
-            real_train_triplets[2] * real_repeat,
+    if morph_on_the_fly:
+        train_dataset = OnTheFlyMorphedDataset(
+            raw_dir='raw_data',
+            real_data_dir=real_train_dir if os.path.exists(real_train_dir) else None,
+            patch_size=patch_size,
+            samples_per_epoch=samples_per_epoch,
+            augment=True,
+            real_patch_prob=0.25
         )
-        train_volume_paths += real_train_triplets[0]
-        train_intensity_paths += real_train_triplets[1]
-        train_orientation_paths += real_train_triplets[2]
-        val_volume_paths, val_intensity_paths, val_orientation_paths = real_val_triplets
+        if train_on_all_data:
+            val_volume_paths, val_intensity_paths, val_orientation_paths = [], [], []
+        else:
+            _, real_val_triplets = split_real_validation_triplets(real_val_dir)
+            val_volume_paths, val_intensity_paths, val_orientation_paths = real_val_triplets
+    else:
+        if real_only:
+            train_volume_paths, train_intensity_paths, train_orientation_paths = [], [], []
+        else:
+            train_volume_paths, train_intensity_paths, train_orientation_paths = collect_dataset_triplets(data_dir)
 
-    train_dataset = Fiber3DPatchDataset(
-        volume_paths=train_volume_paths,
-        intensity_paths=train_intensity_paths,
-        orientation_paths=train_orientation_paths,
-        real_data_dir=real_data_dir,
-        real_stamp_prob=real_stamp_prob,
-        patch_size=patch_size,
-        samples_per_epoch=samples_per_epoch,
-        augment=True,
-        fg_prob=0.85,
-        jitter_voxels=2
-    )
+        if train_on_all_data:
+            real_triplets = collect_dataset_triplets(real_val_dir)
+            train_volume_paths += real_triplets[0]
+            train_intensity_paths += real_triplets[1]
+            train_orientation_paths += real_triplets[2]
+            val_volume_paths, val_intensity_paths, val_orientation_paths = [], [], []
+        else:
+            real_train_triplets, real_val_triplets = split_real_validation_triplets(real_val_dir)
+            real_repeat = max(1, int(real_repeat))
+            real_train_triplets = (
+                real_train_triplets[0] * real_repeat,
+                real_train_triplets[1] * real_repeat,
+                real_train_triplets[2] * real_repeat,
+            )
+            train_volume_paths += real_train_triplets[0]
+            train_intensity_paths += real_train_triplets[1]
+            train_orientation_paths += real_train_triplets[2]
+            val_volume_paths, val_intensity_paths, val_orientation_paths = real_val_triplets
+
+        train_dataset = Fiber3DPatchDataset(
+            volume_paths=train_volume_paths,
+            intensity_paths=train_intensity_paths,
+            orientation_paths=train_orientation_paths,
+            real_data_dir=real_data_dir,
+            real_stamp_prob=real_stamp_prob,
+            patch_size=patch_size,
+            samples_per_epoch=samples_per_epoch,
+            augment=True,
+            fg_prob=0.85,
+            jitter_voxels=2
+        )
     test_dataset = Fiber3DPatchDataset(
         data_dir=test_dir,
         real_data_dir=None,
@@ -226,6 +244,9 @@ def train_intensity_model(
         scheduler.step()
         train_loss = running_loss / len(train_loader)
         train_dice = running_dice / len(train_loader)
+
+        if hasattr(train_dataset, 'refresh_epoch_pool'):
+            train_dataset.refresh_epoch_pool()
 
         if val_volume_paths:
             # -----------------------------------------------------------------
@@ -352,6 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--pretrained', type=str, default=None, help="Pretrained checkpoint path (default: None - train from scratch)")
     parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
+    parser.add_argument('--morph-on-the-fly', action='store_true', help="Augment GAD splines and morph real biological fibers on-the-fly")
     parser.add_argument('--train-on-all-data', action='store_true', help="Train on all real curated patches with no held-out validation")
     parser.add_argument('--real-stamp-prob', type=float, default=0.0, help="Probability of stamping real fibers")
     parser.add_argument('--save-path', type=str, default='checkpoints/best_intensity_unet.pth')
@@ -368,6 +390,7 @@ if __name__ == '__main__':
         pretrained_path=args.pretrained,
         train_on_all_data=args.train_on_all_data,
         real_only=args.real_only,
+        morph_on_the_fly=args.morph_on_the_fly,
         real_stamp_prob=args.real_stamp_prob,
         save_path=args.save_path
     )

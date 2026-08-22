@@ -62,7 +62,7 @@ DEFAULT_PARAMS = dict(
     # Skeleton extraction
     core_threshold    = 0.28,
     sigma_prefilter   = 0.60,
-    spur_pruning_steps= 8,
+    spur_pruning_steps= 0,
 
     # Step 1: H-junction severing
     max_rung_length      = 14,
@@ -70,18 +70,18 @@ DEFAULT_PARAMS = dict(
     perp_thresh          = 0.50,
 
     # Step 2: Gap bridging
-    max_gap_distance  = 18.0,
-    mutual_thresh     = 0.65,
-    forward_thresh    = 0.55,
-    durable_thresh    = 0.50,
-    durable_min_frac  = 0.50,
+    max_gap_distance  = 24.0,
+    mutual_thresh     = 0.50,
+    forward_thresh    = 0.35,
+    durable_thresh    = 0.40,
+    durable_min_frac  = 0.40,
     n_gap_samples     = 7,
 
     # Step 3: Fragment graph
-    min_fragment_length = 8,
+    min_fragment_length = 1,
 
     # Step 5: Diffusion
-    min_chain_length  = 25,
+    min_chain_length  = 1,
     fg_threshold      = 0.10,
 )
 
@@ -148,18 +148,18 @@ def run_direct_topology_optimization(
     del binary_core
     gc.collect()
 
-    struct26 = np.ones((3, 3, 3), dtype=np.uint8)
-    print(f"  Pruning spurs ({params['spur_pruning_steps']} iterations)...", flush=True)
-    for _ in range(params['spur_pruning_steps']):
-        skel_u8 = skel.astype(np.uint8)
-        n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
-        endpoints = skel & (n_count == 1)
-        if not endpoints.any():
-            break
-        skel[endpoints] = False
-
-    del skel_u8, n_count
-    gc.collect()
+    if params.get('spur_pruning_steps', 0) > 0:
+        struct26 = np.ones((3, 3, 3), dtype=np.uint8)
+        print(f"  Pruning spurs ({params['spur_pruning_steps']} iterations)...", flush=True)
+        for _ in range(params['spur_pruning_steps']):
+            skel_u8 = skel.astype(np.uint8)
+            n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
+            endpoints = skel & (n_count == 1)
+            if not endpoints.any():
+                break
+            skel[endpoints] = False
+        del skel_u8, n_count
+        gc.collect()
 
     n_skel_vox = int(skel.sum())
     print(f"  Skeleton extracted: {n_skel_vox} voxels in {time.time()-t1:.1f}s", flush=True)

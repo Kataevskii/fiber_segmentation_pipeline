@@ -10,9 +10,11 @@ from scipy.ndimage import (
     distance_transform_edt,
     convolve,
     label as nd_label,
-    center_of_mass
+    center_of_mass,
+    gaussian_filter1d
 )
 from scipy.spatial import cKDTree
+from scipy.interpolate import splprep, splev
 from skimage.graph import route_through_array
 
 class RealDataCurationEngine:
@@ -154,7 +156,57 @@ class RealDataCurationEngine:
             'face_images_rgba': face_imgs_rgba,
             'point_cloud': point_cloud
         }
-    def resolve_connections(self, seeds, crop_bounds=None):
+
+    def _center_curve_to_mask(self, curve, mask, smoothing_sigma=2.5, resample_step=1.0):
+        """
+        Refines curve points so they lie exactly at the cross-sectional center of mass of the mask,
+        fits a continuous cubic B-spline along the arc length, and resamples with uniform step size
+        to eliminate all discrete voxel staircasing and jaggedness.
+        """
+        if len(curve) < 2:
+            return curve.astype(np.float32)
+
+        mask_coords = np.argwhere(mask > 0).astype(np.float32)
+        if len(mask_coords) == 0:
+            return curve.astype(np.float32)
+
+        # 1. Project mask coordinates to find cross-sectional centroids
+        tree = cKDTree(curve)
+        _, indices = tree.query(mask_coords, k=1)
+
+        centered = curve.copy().astype(np.float32)
+        for k in range(len(curve)):
+            assigned = (indices == k)
+            if np.sum(assigned) >= 3:
+                centered[k] = mask_coords[assigned].mean(axis=0)
+
+        # 2. Gaussian smoothing on centered points
+        smoothed_pts = gaussian_filter1d(centered, sigma=smoothing_sigma, axis=0)
+
+        # 3. Parametric cubic B-spline arc-length resampling
+        diffs = np.linalg.norm(np.diff(smoothed_pts, axis=0), axis=1)
+        keep_idx = np.insert(diffs > 1e-4, 0, True)
+        valid_pts = smoothed_pts[keep_idx]
+
+        if len(valid_pts) < 4:
+            return smoothed_pts.astype(np.float32)
+
+        try:
+            tck, u = splprep([valid_pts[:, 0], valid_pts[:, 1], valid_pts[:, 2]], k=min(3, len(valid_pts)-1), s=len(valid_pts) * 0.5)
+            u_fine = np.linspace(0, 1, len(valid_pts) * 4)
+            z_fine, y_fine, x_fine = splev(u_fine, tck)
+            fine_pts = np.column_stack([z_fine, y_fine, x_fine])
+
+            arc_lengths = np.insert(np.cumsum(np.linalg.norm(np.diff(fine_pts, axis=0), axis=1)), 0, 0.0)
+            total_len = arc_lengths[-1]
+            n_resampled = max(3, int(np.round(total_len / resample_step)))
+            u_uniform = np.linspace(0, 1, n_resampled)
+            z_u, y_u, x_u = splev(u_uniform, tck)
+            return np.column_stack([z_u, y_u, x_u]).astype(np.float32)
+        except Exception:
+            return smoothed_pts.astype(np.float32)
+
+    def resolve_connections(self, seeds, crop_bounds=None):
         """
         Executes deterministic geodesic minimal-curvature path resolution:
         1. Groups seeds by fiber_id.
@@ -166,50 +218,63 @@ class RealDataCurationEngine:
         self.current_seeds = seeds
         S = self.cube_size
 
-        fibers_dict = {}
-        for s in seeds:
-            fid = int(s['fiber_id'])
-            if fid not in fibers_dict:
-                fibers_dict[fid] = []
-            fibers_dict[fid].append(s)
-
         resolved_curves = {}
         curves_3d_json = {}
         inst_skel = np.zeros((S, S, S), dtype=np.uint16)
-        dynamic_cost = self.current_cost_grid.copy()
 
-        for fid, seed_list in fibers_dict.items():
+        # Build dynamic cost tensor (1 / EDT^2)
+        base_cost = 1.0 / (self.current_dt**2 + 1e-4)
+        dynamic_cost = np.ascontiguousarray(base_cost.copy(), dtype=np.float64)
+
+        # Group seeds by fiber ID
+        fiber_groups = {}
+        for s in seeds:
+            fid = s['fiber_id']
+            fiber_groups.setdefault(fid, []).append(s)
+
+        for fid, seed_list in fiber_groups.items():
             if len(seed_list) >= 2:
-                # Connected Path with optional intermediate Waypoints (P_start -> W_1 -> ... -> P_end)
-                snapped_pts = []
-                for s in seed_list:
-                    p = tuple(int(c) for c in s['pos3d'])
-                    p_snapped = self._snap_to_foreground(p)
-                    if p_snapped is not None:
-                        snapped_pts.append(p_snapped)
+                # Order seeds: waypoints in middle
+                endpoints = [s for s in seed_list if not s.get('is_waypoint', False)]
+                waypoints = [s for s in seed_list if s.get('is_waypoint', False)]
+                ordered_seeds = endpoints[:1] + waypoints + endpoints[1:]
 
-                if len(snapped_pts) >= 2:
+                segments = []
+                for i in range(len(ordered_seeds) - 1):
+                    p1 = tuple(int(c) for c in ordered_seeds[i]['pos3d'])
+                    p2 = tuple(int(c) for c in ordered_seeds[i+1]['pos3d'])
+
+                    p1_snapped = self._snap_to_foreground(p1)
+                    p2_snapped = self._snap_to_foreground(p2)
+
+                    if p1_snapped is None or p2_snapped is None:
+                        continue
+
                     try:
-                        segments = []
-                        for i in range(len(snapped_pts) - 1):
-                            seg_path = self._route_fiber_lane_guided(snapped_pts[i], snapped_pts[i+1], dynamic_cost)
-                            if i > 0 and len(seg_path) > 1:
-                                seg_path = seg_path[1:] # avoid duplicate seam voxel
-                            segments.append(seg_path)
+                        path_indices, _ = route_through_array(
+                            dynamic_cost,
+                            p1_snapped,
+                            p2_snapped,
+                            fully_connected=True,
+                            geometric=True
+                        )
+                        path_arr = np.array(path_indices, dtype=np.float32)
+                        segments.append(path_arr if i == 0 else path_arr[1:])
+                    except Exception as e:
+                        print(f"Warning: Route segment failed for Fiber {fid}: {e}", flush=True)
 
-                        path_arr = np.vstack(segments)
-                        resolved_curves[fid] = path_arr
-                        curves_3d_json[fid] = path_arr.tolist()
-                        inst_skel[path_arr[:, 0], path_arr[:, 1], path_arr[:, 2]] = fid
+                if segments:
+                    try:
+                        full_path = np.vstack(segments)
+                        resolved_curves[fid] = full_path
+                        curves_3d_json[fid] = full_path.tolist()
 
-                        # Apply soft 1-voxel penalty along centerline
-                        for pt in path_arr:
+                        for pt in full_path.astype(int):
                             dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
                     except Exception as e:
                         print(f"Warning: Geodesic route failed for Fiber {fid}: {e}", flush=True)
 
             elif len(seed_list) == 1:
-                # Terminating singleton
                 s = seed_list[0]
                 p_start = tuple(int(c) for c in s['pos3d'])
                 p_snapped = self._snap_to_foreground(p_start)
@@ -218,9 +283,8 @@ class RealDataCurationEngine:
                     if len(path_arr) > 0:
                         resolved_curves[fid] = path_arr
                         curves_3d_json[fid] = path_arr.tolist()
-                        inst_skel[path_arr[:, 0], path_arr[:, 1], path_arr[:, 2]] = fid
 
-                        for pt in path_arr:
+                        for pt in path_arr.astype(int):
                             dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
 
         # Accelerated Multi-Label 3D Voronoi Diffusion & Target Generation via cKDTree
@@ -230,29 +294,43 @@ class RealDataCurationEngine:
         intensity_target = np.zeros((S, S, S), dtype=np.float32)
 
         if len(resolved_curves) > 0:
-            # Gather all skeleton points and their fiber IDs
-            all_pts = []
-            all_fids = []
-            for fid, curve in resolved_curves.items():
-                all_pts.append(curve)
-                all_fids.append(np.full(len(curve), fid, dtype=np.uint16))
+            # Pass 1: Initial Voronoi multi-label diffusion from coarse Dijkstra paths
+            all_pts = [curve for curve in resolved_curves.values()]
+            all_fids = [np.full(len(curve), fid, dtype=np.uint16) for fid, curve in resolved_curves.items()]
             all_skel_coords = np.vstack(all_pts)
             all_skel_fids = np.concatenate(all_fids)
 
-            # Query distance from foreground voxels to nearest skeleton point in < 1ms
             fg_coords = np.argwhere(self.current_patch_bin > 0)
             if len(fg_coords) > 0:
                 skel_tree = cKDTree(all_skel_coords)
                 dists, indices = skel_tree.query(fg_coords, k=1)
-
-                # Prune points exceeding fiber radius threshold (<= 6.5 vx)
                 valid_mask = (dists <= 6.5)
                 valid_fg = fg_coords[valid_mask]
-                valid_dists = dists[valid_mask]
                 nearest_fids = all_skel_fids[indices[valid_mask]]
 
                 inst_vol[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = nearest_fids
                 clean_patch_bin = (inst_vol > 0)
+
+                # Pass 2: Auto-refine each curve to its exact cross-sectional center of mass
+                inst_skel.fill(0)
+                for fid in list(resolved_curves.keys()):
+                    f_mask = (inst_vol == fid)
+                    if np.sum(f_mask) >= 5:
+                        refined = self._center_curve_to_mask(resolved_curves[fid], f_mask)
+                        resolved_curves[fid] = refined
+                        curves_3d_json[fid] = refined.tolist()
+
+                    r_int = np.clip(np.round(resolved_curves[fid]).astype(int), 0, S - 1)
+                    inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
+
+                # Pass 3: Recompute exact distance field and targets using centered curves
+                all_pts = [curve for curve in resolved_curves.values()]
+                all_skel_coords = np.vstack(all_pts)
+                skel_tree = cKDTree(all_skel_coords)
+                dists, _ = skel_tree.query(fg_coords, k=1)
+                valid_mask = (dists <= 6.5)
+                valid_fg = fg_coords[valid_mask]
+                valid_dists = dists[valid_mask]
 
                 # Centerline Gaussian probability field G1(x) with sigma = 1.0
                 intensity_target[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = np.exp(
@@ -274,7 +352,7 @@ class RealDataCurationEngine:
 
                 intensity_target = np.clip(intensity_target, -1.0, 1.0)
 
-                # Fast Analytical Orientation Field
+                # Fast Analytical Orientation Field (Continuous Local Tangents via cKDTree)
                 for fid, curve in resolved_curves.items():
                     if len(curve) >= 2:
                         tangents = np.zeros_like(curve, dtype=np.float32)
@@ -286,15 +364,14 @@ class RealDataCurationEngine:
                         norms[norms == 0] = 1.0
                         tangents /= norms
 
-                        mean_tang = np.mean(tangents, axis=0)
-                        mean_norm = np.linalg.norm(mean_tang)
-                        if mean_norm > 0:
-                            mean_tang /= mean_norm
-
+                        c_tree = cKDTree(curve)
                         f_mask = (inst_vol == fid)
                         if np.any(f_mask):
+                            f_coords = np.argwhere(f_mask)
+                            _, nearest_c_idx = c_tree.query(f_coords, k=1)
+                            local_tangs = tangents[nearest_c_idx]
                             for c in range(3):
-                                ori_vol[c, f_mask] = mean_tang[c]
+                                ori_vol[c, f_coords[:, 0], f_coords[:, 1], f_coords[:, 2]] = local_tangs[:, c]
 
         resolve_time = time.time() - t0
 
