@@ -9,16 +9,19 @@ A complete deep learning and geometric graph optimization framework for high-res
 Run the full pipeline out-of-the-box with default auto-discovery and sensible hyperparameters:
 
 ```bash
-# 1. Start Interactive 3D Fiber Curator (Annotate initial patches or fix segmented instances)
+# 1. Place raw synthetic models into raw_data/ & precompute datasets (default 10% test split):
+python prepare_datasets.py
+
+# 2. Start Interactive 3D Fiber Curator (Annotate initial patches or fix/crop segmented instances)
 python curation_tool/app.py
 
-# 2. Train Specialist Models (On-the-fly biological spline morphing, 50 epochs, 25% real patch stamping)
+# 3. Train Specialist Models (On-the-fly biological spline morphing, 50 epochs, 25% real patch stamping)
 python training/train_both.py
 
-# 3. Sliding-Window Neural Inference (Auto-grabs first volume in process_data/, saves to outputs/fiber_*.npy)
+# 4. Sliding-Window Neural Inference (Auto-grabs first volume in process_data/, saves to outputs/fiber_*.npy)
 python inference/run_inference.py
 
-# 4. Global Topology Optimization (Direct degree-1 matching, 32px border severing, min-fiber-length 5)
+# 5. Global Topology Optimization (Direct degree-1 matching, 32px border severing, min-fiber-length 5)
 python inference/run_topology_optimization.py
 
 # OR 1-Click Master End-to-End Resolution:
@@ -29,10 +32,16 @@ python run_end_to_end.py
 
 ## 🔄 Iterative Active Learning & Retraining Workflow
 
-The framework is designed around a closed-loop **Active Learning Flywheel**: rather than manually annotating thousands of dense 3D voxels from scratch, you rapidly bootstrap, inspect, crop errors from segmented outputs, and incrementally retrain:
+The framework is designed around a closed-loop **Active Learning Flywheel**: rather than manually annotating thousands of dense 3D voxels from scratch, you rapidly bootstrap from precomputed synthetic data, inspect, crop errors from segmented outputs, and incrementally retrain:
 
 ```mermaid
 flowchart TD
+    subgraph S0 ["0. Synthetic Data Preparation"]
+        P0["Place Raw Synthetic Data in raw_data/<br/>(AJ_model_*.tif + AJ_model_*.gad)"]
+        P0_PREP["Precompute Memory-Mapped Datasets (10% Test Split)<br/>(python prepare_datasets.py)"]
+        P0 --> P0_PREP
+    end
+
     subgraph S1 ["1. Bootstrap Curation"]
         A1["Open Raw Volume in 3D Fiber Curator<br/>(python curation_tool/app.py)"]
         A2["Extract Random 96³ Patches & Annotate Initial Centerlines<br/>(Space to Solve Geodesics, Enter to Save Ground Truth)"]
@@ -51,7 +60,7 @@ flowchart TD
         C1 --> C2
     end
 
-    subgraph S4 ["4. Error Inspection & Correction"]
+    subgraph S4 ["4. Error Inspection & Crop Curation"]
         D1["Load Segmented TIFF back into 3D Fiber Curator<br/>(Auto-skeletonizes all 40+ predicted fiber instances)"]
         D2["Inspect Challenging Crossings & Crop Wrong Fibers<br/>(Disconnect bad bridges, adjust waypoints, split false merges)"]
         D3["1-Click Ground Truth Patch Export (Enter)"]
@@ -62,12 +71,14 @@ flowchart TD
         E1["Fine-Tune Specialists with Expanded Real Ground Truth Pool<br/>(python training/train_both.py --pretrained)"]
     end
 
+    P0_PREP --> B1
     A2 --> B1
     B2 --> C1
     C2 --> D1
     D3 --> E1
     E1 -->|Deploy Improved Specialists| C1
 
+    style S0 fill:#131826,stroke:#f59e0b,stroke-width:1.5px,color:#fff
     style S1 fill:#131826,stroke:#38bdf8,stroke-width:1.5px,color:#fff
     style S2 fill:#131826,stroke:#a855f7,stroke-width:1.5px,color:#fff
     style S3 fill:#131826,stroke:#3b82f6,stroke-width:1.5px,color:#fff
@@ -75,27 +86,31 @@ flowchart TD
     style S5 fill:#131826,stroke:#10b981,stroke-width:2px,color:#fff
 ```
 
-### Step-by-Step Retraining Loop:
+### Step-by-Step Workflow & Retraining Loop:
 
-1. **Segment Initial Random Patches**:
-   - Launch the Fiber Curator (`python curation_tool/app.py`) and upload your raw volume.
+1. **Place Raw Synthetic Data into `raw_data/` & Run Precomputation**:
+   - Place your raw Altendorf-Jeulin synthetic volume and geometry files (`AJ_model_1.tif` .. `AJ_model_10.tif` and `AJ_model_1.gad` .. `AJ_model_10.gad`) into `raw_data/`.
+   - Run `python prepare_datasets.py` to precompute the memory-mapped continuous potential ($I \in [-1, 1]$) and unit orientation tangent fields ($\vec{O} \in \mathbb{R}^3$). By default, **10% of the raw models are split into `test_data/`** for test evaluation, while **90% are stored in `augmented_data/`** for training.
+
+2. **Segment Initial Random Patches**:
+   - Launch the Fiber Curator (`python curation_tool/app.py`) and upload your raw microscopy volume.
    - Click **`🎲 Random 96³`** to sample dense regions. Trace a few clean fiber strands using interactive seed pins.
    - Press **`Space`** to compute continuous geodesic paths, then press **`Enter`** to save clean ground truth triplets into `real_train_data/curated_patches/`.
 
-2. **Launch Initial Specialist Training**:
+3. **Launch Initial Specialist Training**:
    - Run `python training/train_both.py` to train both `IntensityUNet3D` and `OrientationUNet3D`.
    - On-the-fly spline morphing mathematically deforms your curated donor fibers onto thousands of synthetic trajectories with a 25% patch stamping rate, producing robust models from minimal manual data.
 
-3. **Infer & Optimize Full Volumes**:
+4. **Infer & Optimize Full Volumes**:
    - Run `python run_end_to_end.py` to generate the complete 3D segmented instance stack (`outputs/fiber_resolution_final/instance_volume.tif`).
 
-4. **Crop & Fix Erroneous Fibers from Segmented Results**:
+5. **Crop & Fix Erroneous Fibers from Segmented Results**:
    - Open `instance_volume.tif` directly in the Fiber Curator.
    - The tool instantly skeletonizes all segmented labels in 3D.
    - Locate any false merges, over-connected rungs, or broken segments. Delete erroneous fiber centerlines, crop out bad bridges, and fix difficult crossings.
    - Press **`Enter`** to save the corrected sub-volumes as high-value "hard negative / hard positive" training samples.
 
-5. **Iterative Retraining**:
+6. **Iterative Retraining**:
    - Retrain your specialists warm-started from the previous checkpoints:
      ```bash
      python training/train_both.py --pretrained
@@ -106,7 +121,20 @@ flowchart TD
 
 ## 💻 Command Reference & Usage Guide
 
-### 1. Interactive 3D Fiber Curator Web App
+### 1. Place Raw Synthetic Data in `raw_data/` & Run Precomputation
+Place raw synthetic files (`AJ_model_*.tif` and `AJ_model_*.gad`) into `raw_data/`, then precompute analytical ground-truth orientation and signed probability fields into memory-mapped NPY format with a default **10% test split**:
+
+```bash
+# Precompute datasets (splits 10% into test_data/ and 90% into augmented_data/ by default):
+python prepare_datasets.py
+
+# Optional: Custom test split fraction or force overwrite:
+python prepare_datasets.py --test-split 0.10 --overwrite
+```
+
+---
+
+### 2. Interactive 3D Fiber Curator Web App
 Start the WebGL Three.js annotation server to inspect volumes, load segmented instances, fix wiring, and curate real training samples:
 
 ```bash
@@ -123,7 +151,7 @@ Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser:
 
 ---
 
-### 2. Train Specialist Models (On-The-Fly Morphing)
+### 3. Train Specialist Models (On-The-Fly Morphing)
 Default settings automatically use 10-block/epoch dynamic biological morphing, 50 epochs, 64³ patch size, and batch size 4:
 
 ```bash
@@ -140,7 +168,7 @@ python training/train_both.py --real-only --train-on-all-data --pretrained
 
 ---
 
-### 3. Run Sliding-Window Inference
+### 4. Run Sliding-Window Inference
 Generates continuous potential and tangent fields from your microscopy volume (auto-detected as first file in `process_data/` and saved to `outputs/fiber_intensity.npy`, `outputs/fiber_orientation.npy`):
 
 ```bash
@@ -153,7 +181,7 @@ python inference/run_inference.py --input path/to/volume.tif --output-prefix out
 
 ---
 
-### 4. Run Topology Optimization Standalone
+### 5. Run Topology Optimization Standalone
 Optimizes topology directly from precomputed neural fields using **direct whole-volume degree-1 linear assignment matching** (32px boundary loop severing and <5 vx small fiber removal + color re-propagation by default):
 
 ```bash
@@ -172,20 +200,11 @@ python inference/run_topology_optimization.py --mode chunked --chunk-size 512 --
 
 ---
 
-### 5. 1-Click End-to-End Master Resolution
+### 6. 1-Click End-to-End Master Resolution
 Runs GPU neural inference on raw microscopy and executes full topology optimization in a single command:
 
 ```bash
 python run_end_to_end.py
-```
-
----
-
-### 6. Dataset Precomputation
-Precomputes analytical ground-truth orientation and signed probability fields from GAD geometry models into memory-mapped NPY format:
-
-```bash
-python prepare_datasets.py
 ```
 
 ---
@@ -443,6 +462,14 @@ fiber_resolution_pipeline/
 ├── requirements.txt                    # Python package dependencies
 ├── prepare_datasets.py                 # Precomputes memory-mapped NPY datasets & signed targets
 ├── run_end_to_end.py                   # 1-Click Master Runner (Inference + Optimization)
+│
+├── raw_data/                           # Raw synthetic models (AJ_model_*.tif, AJ_model_*.gad)
+├── augmented_data/                     # Precomputed training volumes (90% split, continuous NPY fields)
+├── test_data/                          # Precomputed test evaluation volumes (10% split)
+├── process_data/                       # Raw tomography/microscopy volumes for inference
+├── real_train_data/                    # Curated real training patches from 3D Fiber Curator
+├── outputs/                            # Predicted neural fields & topology resolved instances
+├── checkpoints/                        # Trained specialist model checkpoints
 │
 ├── core/
 │   ├── models.py                       # IntensityUNet3D & OrientationUNet3D architectures
