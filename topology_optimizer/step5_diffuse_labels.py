@@ -28,7 +28,7 @@ def build_labeled_skeleton(
     chains: list[FiberChain],
     seg_labels: np.ndarray | None,
     volume_shape: tuple[int, int, int],
-    min_chain_length: int = 1,
+    min_chain_length: int = 10,
     out_skel_mmap: np.ndarray | None = None
 ) -> tuple[np.ndarray, int]:
     """
@@ -210,3 +210,145 @@ def diffuse_labels_voronoi(
     gc.collect()
 
     return instance_vol
+
+
+def prune_short_fibers_and_repropagate(
+    inst_skel: np.ndarray,
+    inst_vol: np.ndarray,
+    min_length: int = 10,
+    chunk_size: int = 1000000,
+    verbose: bool = True,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """
+    At the very end of topology optimization:
+    1. Identifies small fiber centerlines (shorter than min_length voxels).
+    2. Removes these small fiber centerlines from inst_skel (set to 0).
+    3. Re-propagates the color / instance label of the nearest legitimate fiber (length >= min_length)
+       onto all the volume voxels that belonged to the pruned small fibers.
+    4. Compactly renumbers surviving fiber instances 1 .. N.
+
+    Parameters
+    ----------
+    inst_skel  : (D, H, W) int32 labeled skeleton (in-place or memmap)
+    inst_vol   : (D, H, W) int32 labeled instance volume (in-place or memmap)
+    min_length : int (default: 10) minimum centerline length in voxels
+    chunk_size : int query chunk size for memory safety
+    verbose    : bool
+
+    Returns
+    -------
+    inst_skel   : (D, H, W) int32 cleaned skeleton
+    inst_vol    : (D, H, W) int32 cleaned instance volume with color propagation
+    n_surviving : int count of surviving fibers
+    """
+    D, H, W = inst_skel.shape
+    unique_ids, skel_counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
+    if len(unique_ids) == 0:
+        return inst_skel, inst_vol, 0
+
+    id_to_count = dict(zip(unique_ids, skel_counts))
+    short_ids = {int(fid) for fid, cnt in id_to_count.items() if cnt < min_length}
+    surviving_ids = [int(fid) for fid, cnt in id_to_count.items() if cnt >= min_length]
+
+    if not short_ids:
+        if verbose:
+            print(f"  [prune_short_fibers] All {len(surviving_ids)} fibers have centerline >= {min_length} vx. No short fibers to prune.", flush=True)
+        return inst_skel, inst_vol, len(surviving_ids)
+
+    if not surviving_ids:
+        if verbose:
+            print(f"  [prune_short_fibers] Warning: No fibers >= {min_length} vx found. Zeroing outputs.", flush=True)
+        inst_skel[:] = 0
+        inst_vol[:] = 0
+        return inst_skel, inst_vol, 0
+
+    if verbose:
+        print(f"  [prune_short_fibers] Pruning {len(short_ids)} short fibers (< {min_length} vx) and propagating color from {len(surviving_ids)} surviving fibers...", flush=True)
+
+    # 1. Compact map for surviving fiber IDs: old_id -> 1 .. N_surviving
+    compact_map = {old_id: new_id for new_id, old_id in enumerate(surviving_ids, start=1)}
+
+    # 2. Build cKDTree of surviving skeleton seeds
+    surviving_coords_list = []
+    surviving_labels_list = []
+
+    for z in range(D):
+        s_sl = inst_skel[z]
+        mask = np.isin(s_sl, surviving_ids)
+        if mask.any():
+            sy, sx = np.nonzero(mask)
+            sz = np.full(len(sy), z, dtype=np.int32)
+            surviving_coords_list.append(np.column_stack([sz, sy, sx]))
+            raw_lbls = s_sl[sy, sx]
+            new_lbls = np.array([compact_map[int(l)] for l in raw_lbls], dtype=np.int32)
+            surviving_labels_list.append(new_lbls)
+
+    if not surviving_coords_list:
+        inst_skel[:] = 0
+        inst_vol[:] = 0
+        return inst_skel, inst_vol, 0
+
+    seed_coords = np.vstack(surviving_coords_list).astype(np.float32)
+    seed_labels = np.concatenate(surviving_labels_list)
+    del surviving_coords_list, surviving_labels_list
+    gc.collect()
+
+    tree = cKDTree(seed_coords)
+    del seed_coords
+    gc.collect()
+
+    # 3. Vectorized lookup table for surviving labels
+    max_id = max(int(np.max(unique_ids)), int(np.max(inst_vol))) if len(unique_ids) > 0 else 0
+    lookup = np.zeros(max_id + 1, dtype=np.int32)
+    for old_id, new_id in compact_map.items():
+        if old_id <= max_id:
+            lookup[old_id] = new_id
+
+    short_ids_list = list(short_ids)
+    n_repropagated_voxels = 0
+
+    # 4. Stream slice by slice to guarantee near-zero resident RAM on large memmaps
+    for z in range(D):
+        s_sl = inst_skel[z]
+        v_sl = inst_vol[z]
+
+        # Clean skeleton: keep surviving with new IDs, wipe short
+        s_surv_mask = np.isin(s_sl, surviving_ids)
+        new_s_sl = np.zeros_like(s_sl)
+        new_s_sl[s_surv_mask] = lookup[s_sl[s_surv_mask]]
+        inst_skel[z] = new_s_sl
+
+        # Clean volume: remap surviving, re-propagate short
+        v_surv_mask = np.isin(v_sl, surviving_ids)
+        v_short_mask = np.isin(v_sl, short_ids_list)
+
+        new_v_sl = np.zeros_like(v_sl)
+        new_v_sl[v_surv_mask] = lookup[v_sl[v_surv_mask]]
+
+        if v_short_mask.any():
+            sy, sx = np.nonzero(v_short_mask)
+            sz = np.full(len(sy), z, dtype=np.int32)
+            short_pts = np.column_stack([sz, sy, sx])
+
+            for start_i in range(0, len(short_pts), chunk_size):
+                end_i = min(start_i + chunk_size, len(short_pts))
+                sub_pts = short_pts[start_i:end_i]
+                _, nearest_idx = tree.query(sub_pts, workers=-1)
+                new_v_sl[sub_pts[:, 1], sub_pts[:, 2]] = seed_labels[nearest_idx]
+
+            n_repropagated_voxels += len(short_pts)
+
+        inst_vol[z] = new_v_sl
+
+    if hasattr(inst_skel, 'flush'):
+        inst_skel.flush()
+    if hasattr(inst_vol, 'flush'):
+        inst_vol.flush()
+
+    if verbose:
+        print(f"  [prune_short_fibers] Successfully removed {len(short_ids)} short fiber centerlines (< {min_length} vx), re-propagated color to {n_repropagated_voxels} voxels, retained {len(surviving_ids)} clean continuous fibers.", flush=True)
+
+    del tree, seed_labels, lookup
+    gc.collect()
+
+    return inst_skel, inst_vol, len(surviving_ids)

@@ -37,7 +37,7 @@ from topology_optimizer.step1_sever_h_junctions import sever_h_junctions
 from topology_optimizer.step2_bridge_gaps import find_bridge_candidates
 from topology_optimizer.step3_build_fragment_graph import build_fragment_graph, FiberFragment
 from topology_optimizer.step4_optimize_topology import optimize_topology
-from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi
+from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi, prune_short_fibers_and_repropagate
 from topology_optimizer.clean_border_artifacts import crop_and_separate_border_fibers, separate_broken_fibers
 from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad, compute_metrics
 from topology_optimizer.visualize_results import save_diagnostic_slices, save_fiber_length_histogram, save_metrics_text, export_uint16_tiff
@@ -84,8 +84,9 @@ DEFAULT_PARAMS = dict(
     # Step 3: Fragment graph
     min_fragment_length = 1,
 
-    # Step 5: Diffusion
-    min_chain_length  = 1,
+    # Step 5: Diffusion & Post-processing
+    min_chain_length  = 10,
+    min_fiber_length  = 10,
     fg_threshold      = 0.10,
 
     # Border cleaning
@@ -312,6 +313,23 @@ def run_direct_topology_optimization(
     print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers in final volume", flush=True)
 
     # -------------------------------------------------------------------------
+    # STAGE 6.5: Small Fiber Pruning (< min_fiber_length vx) & Color Re-propagation
+    # -------------------------------------------------------------------------
+    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 10))
+    if min_flen > 1:
+        print("\n" + "=" * 85, flush=True)
+        print(f" STAGE 6.5: Pruning Short Fibers (< {min_flen} vx) & Propagating Color", flush=True)
+        print("=" * 85, flush=True)
+        t_prune = time.time()
+        inst_skel, inst_vol, n_kept_chains = prune_short_fibers_and_repropagate(
+            inst_skel=inst_skel,
+            inst_vol=inst_vol,
+            min_length=min_flen,
+            verbose=verbose
+        )
+        print(f"  Pruning and color propagation complete in {time.time()-t_prune:.1f}s", flush=True)
+
+    # -------------------------------------------------------------------------
     # STAGE 7: Diagnostics & Visualizations
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
@@ -336,12 +354,13 @@ def run_direct_topology_optimization(
         n_max_label=n_kept_chains,
     )
 
-    chain_lengths = [c.total_length for c in chains if c.total_length >= params['min_chain_length']]
+    unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
+    chain_lengths = [int(c) for c in counts]
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
 
     total_runtime = float(time.time() - t_total)
     metrics = {
-        'N_final_fibers': n_kept_chains,
+        'N_final_fibers': len(chain_lengths),
         'Mean_fiber_length_voxels': float(np.mean(chain_lengths)) if chain_lengths else 0,
         'Max_fiber_length_voxels': float(max(chain_lengths)) if chain_lengths else 0,
         'Total_pipeline_runtime_sec': total_runtime,
@@ -354,7 +373,7 @@ def run_direct_topology_optimization(
 
     print("\n" + "=" * 85, flush=True)
     print(f" TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
-    print(f"  - Final Continuous Fibers Resolved:  {n_kept_chains}")
+    print(f"  - Final Continuous Fibers Resolved:  {len(chain_lengths)}")
     print(f"  - Mean Fiber Length:                 {metrics['Mean_fiber_length_voxels']:.1f} voxels")
     print(f"  - Max Fiber Length:                  {metrics['Max_fiber_length_voxels']:.1f} voxels")
     print(f"  - Instance Volume Array (npy):       {inst_vol_path}")
@@ -720,6 +739,21 @@ def run_chunked_topology_optimization(
 
     shutil.rmtree(tmp_chunk_dir, ignore_errors=True)
 
+    # Post-Assembly Small Fiber Pruning & Color Re-propagation
+    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 10))
+    if min_flen > 1:
+        print("\n" + "=" * 85, flush=True)
+        print(f" Post-Assembly: Pruning Short Fibers (< {min_flen} vx) & Propagating Color", flush=True)
+        print("=" * 85, flush=True)
+        t_prune = time.time()
+        inst_skel, inst_vol, _ = prune_short_fibers_and_repropagate(
+            inst_skel=inst_skel,
+            inst_vol=inst_vol,
+            min_length=min_flen,
+            verbose=verbose
+        )
+        print(f"  Pruning and color propagation complete in {time.time()-t_prune:.1f}s", flush=True)
+
     # Export final outputs as uint16 TIFF
     inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
     inst_skel_tif_path = os.path.join(out_dir, 'instance_skeleton.tif')
@@ -739,7 +773,7 @@ def run_chunked_topology_optimization(
     )
 
     unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
-    chain_lengths = [int(c) for c in counts if c >= params['min_chain_length']]
+    chain_lengths = [int(c) for c in counts]
 
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
 
@@ -825,6 +859,8 @@ if __name__ == '__main__':
     parser.add_argument('--cut-border', type=int, default=0, help="Optional margin in voxels (e.g. 32) to cut from each face and separate broken fibers")
     parser.add_argument('--border-mode', type=str, default='crop', choices=['crop', 'zero'],
                         help="Border cut mode: 'crop' (default, trims shape) or 'zero' (preserves shape, zeroes boundary)")
+    parser.add_argument('--min-fiber-length', type=int, default=10,
+                        help="Minimum fiber centerline length in voxels (default: 10). Shorter fibers are removed and color-propagated.")
     args = parser.parse_args()
 
     params = DEFAULT_PARAMS.copy()
@@ -832,6 +868,8 @@ if __name__ == '__main__':
     params['core_threshold'] = args.core_threshold
     params['cut_border'] = args.cut_border
     params['border_mode'] = args.border_mode
+    params['min_fiber_length'] = args.min_fiber_length
+    params['min_chain_length'] = args.min_fiber_length
 
     run_topology_optimization(
         intensity_path=args.intensity,

@@ -94,19 +94,32 @@ To eliminate the synthetic-to-real domain gap without requiring thousands of man
                                        ▼
                      [Topology Optimization Engine]
                                        │
-    ┌──────────────────────────────────┴──────────────────────────────────┐
-    ▼                                                                     ▼
-1. 3D Thinning (Full Boundary Context)                2. Context-Preserving Margin Cut (--cut-border)
-    ▼                                                                     ▼
-3. Transverse H-Severing (perp > 0.50)                4. Fragment Graph & Durable Endpoints
-    ▼                                                                     ▼
-5. Direction-Durable Gap Search                       6. Min-Cost Global Matching (Degree=1)
-    ▼                                                                     ▼
-7. Multi-Label Voronoi Diffusion                      8. Dual Export (.npy + uint16 .tif)
+                                       ▼
+                    1. 3D Thinning (Full Boundary Context) 
+                                       │
+                                       ▼               
+                    2. Context-Preserving Margin Cut (--cut-border)
+                                       │
+                                       ▼   
+                    3. Transverse H-Severing (perp > 0.50)
+                                       │
+                                       ▼        
+                    4. Fragment Graph & Durable Endpoints
+                                       │
+                                       ▼  
+                    5. Direction-Durable Gap Search      
+                                       │
+                                       ▼                   
+                    6. Min-Cost Global Matching (Degree=1)
+                                       │
+                                       ▼  
+                    7. Multi-Label Voronoi Diffusion
+                                       │
+                                       ▼                        
+                    8. Dual Export (.npy + uint16 .tif)
                                        │
                                        ▼
-                     Final 3D Labeled Fiber Instances & Centerlines
-                        (instance_volume.tif / .npy, instance_skeleton.tif / .npy)
+                    Final 3D Labeled Fiber Instances & Centerlines
 ```
 
 ---

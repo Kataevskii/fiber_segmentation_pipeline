@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--cut-border', type=int, default=32, help="Margin in voxels (e.g. 32) to sever outer boundary loops")
     parser.add_argument('--out', type=str, default='outputs/fiber_resolution_final')
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
+    parser.add_argument('--min-fiber-length', type=int, default=10, help="Minimum fiber centerline length in voxels (default: 10)")
     args = parser.parse_args()
 
     t_start = time.time()
@@ -61,6 +62,8 @@ def main():
     # 2. Global Topology Optimization
     opt_params = DEFAULT_PARAMS.copy()
     opt_params['cut_border'] = args.cut_border
+    opt_params['min_fiber_length'] = args.min_fiber_length
+    opt_params['min_chain_length'] = args.min_fiber_length
 
     metrics = run_topology_optimization(
         intensity_path=int_path,
