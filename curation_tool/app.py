@@ -9,7 +9,7 @@ from curation_tool.engine import RealDataCurationEngine
 app = Flask(__name__)
 
 engine = RealDataCurationEngine(
-    raw_volume_path='process_data/COLLAGENCROP_003_0000.tif',
+    raw_volume_path='process_data/CROP_003_0000.tif',
     curated_output_dir='real_train_data/curated_patches',
     cube_size=96
 )
@@ -776,12 +776,6 @@ HTML_TEMPLATE = """
             display: flex;
             flex-direction: column;
             gap: 8px;
-            transition: all 0.2s ease;
-        }
-
-        .crop-card.active {
-            border-color: rgba(0, 229, 255, 0.45);
-            box-shadow: 0 0 12px rgba(0, 229, 255, 0.12);
         }
 
         .crop-row {
@@ -964,10 +958,6 @@ HTML_TEMPLATE = """
                         <input type="checkbox" id="chk-pointcloud" checked onchange="togglePointCloud(this.checked)">
                         <span>3D Points</span>
                     </label>
-                    <label class="toggle-pill highlight" id="crop-stage-toggle" title="Toggle visual sub-box crop ROI (Hotkey: C)">
-                        <input type="checkbox" id="chk-crop-toggle" onchange="toggleCropEnabled(this.checked)">
-                        <span>✂️ Crop ROI</span>
-                    </label>
                 </div>
 
                 <!-- Ergonomic Active Fiber Capsule -->
@@ -1004,7 +994,7 @@ HTML_TEMPLATE = """
                 <span><kbd>Enter</kbd> Save & Next</span>
                 <span><kbd>R</kbd> Random Cube</span>
                 <span><kbd>F</kbd> Focus Active Fiber Crop</span>
-                <span><kbd>C</kbd> Toggle Crop</span>
+                <span><kbd>C</kbd> Reset Crop</span>
                 <span><kbd>[ / ]</kbd> Prev/Next ID</span>
             </div>
         </div>
@@ -1021,10 +1011,6 @@ HTML_TEMPLATE = """
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="panel-title" style="display: flex; align-items: center; gap: 6px;">
                         <span>✂️ Visual Sub-Box Crop (ROI)</span>
-                        <label class="toggle-pill highlight" style="padding: 1px 6px; font-size: 10px; cursor: pointer;">
-                            <input type="checkbox" id="chk-crop-active" onchange="toggleCropEnabled(this.checked)">
-                            <span>Active</span>
-                        </label>
                     </div>
                     <span id="crop-stats-badge" class="badge">Full: 96³ (100%)</span>
                 </div>
@@ -1034,30 +1020,30 @@ HTML_TEMPLATE = """
                     <!-- Z Axis (Depth) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">Z:</span>
-                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min (Depth start)">
-                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('z', 'min', this.value)" title="Z Min">
-                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('z', 'max', this.value)" title="Z Max">
-                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max (Depth end)">
+                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min (Depth start)">
+                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min">
+                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max">
+                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max (Depth end)">
                         <span id="crop-z-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
                     <!-- Y Axis (Height) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">Y:</span>
-                        <input type="number" id="crop-y-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min (Height start)">
-                        <input type="range" id="crop-y-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('y', 'min', this.value)" title="Y Min">
-                        <input type="range" id="crop-y-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('y', 'max', this.value)" title="Y Max">
-                        <input type="number" id="crop-y-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max (Height end)">
+                        <input type="number" id="crop-y-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min (Height start)">
+                        <input type="range" id="crop-y-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min">
+                        <input type="range" id="crop-y-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max">
+                        <input type="number" id="crop-y-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max (Height end)">
                         <span id="crop-y-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
                     <!-- X Axis (Width) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">X:</span>
-                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min (Width start)">
-                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" value="0" oninput="onCropSliderInput('x', 'min', this.value)" title="X Min">
-                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" value="95" oninput="onCropSliderInput('x', 'max', this.value)" title="X Max">
-                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max (Width end)">
+                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min (Width start)">
+                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min">
+                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max">
+                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max (Width end)">
                         <span id="crop-x-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
                 </div>
@@ -1161,9 +1147,8 @@ HTML_TEMPLATE = """
         let latestResolvedCurves = {};
         let rawPointCloudFull = [];
 
-        // Visual Crop State
+        // Visual Crop State (Always active)
         let cropState = {
-            enabled: false,
             z_min: 0,
             z_max: 95,
             y_min: 0,
@@ -1180,7 +1165,6 @@ HTML_TEMPLATE = """
         let faceTextures = {};
         let seedPinsGroup, curves3DGroup, pointCloudMesh;
         let globalWireMesh = null;
-        let cropWireMesh = null;
 
         function initIdSelector() {
             const badge = document.getElementById('active-id-badge');
@@ -1364,8 +1348,14 @@ HTML_TEMPLATE = """
             }
         }
 
+        function isCropFull() {
+            return cropState.z_min === 0 && cropState.z_max === 95 &&
+                   cropState.y_min === 0 && cropState.y_max === 95 &&
+                   cropState.x_min === 0 && cropState.x_max === 95;
+        }
+
         function getCropClippingPlanes() {
-            if (!cropState || !cropState.enabled) return [];
+            if (isCropFull()) return [];
             return [
                 new THREE.Plane(new THREE.Vector3( 1,  0,  0), -cropState.x_min),
                 new THREE.Plane(new THREE.Vector3(-1,  0,  0),  cropState.x_max + 1),
@@ -1418,39 +1408,15 @@ HTML_TEMPLATE = """
         }
 
         // =========================================================================
-        // Visual Crop ROI Logic
+        // Visual Crop ROI Logic (Always Active, Step of 1, No Border Highlight)
         // =========================================================================
-
-        function toggleCropEnabled(enabled) {
-            cropState.enabled = !!enabled;
-            const chkStage = document.getElementById('chk-crop-toggle');
-            const chkActive = document.getElementById('chk-crop-active');
-            const cropCard = document.getElementById('crop-card');
-            const stagePill = document.getElementById('crop-stage-toggle');
-
-            if (chkStage) chkStage.checked = cropState.enabled;
-            if (chkActive) chkActive.checked = cropState.enabled;
-            if (cropCard) cropCard.classList.toggle('active', cropState.enabled);
-            if (stagePill) stagePill.classList.toggle('highlight', cropState.enabled);
-
-            if (cropState.enabled) {
-                if (cropState.z_min === 0 && cropState.z_max === 95 &&
-                    cropState.y_min === 0 && cropState.y_max === 95 &&
-                    cropState.x_min === 0 && cropState.x_max === 95) {
-                    setCropPresetValues(16, 79, 16, 79, 16, 79);
-                }
-            }
-
-            syncCropUI();
-            applyCropView(false);
-        }
 
         function handleCropWheel(event, axis, bound) {
             event.preventDefault();
             const input = document.getElementById(`crop-${axis}-${bound}`);
             if (!input) return;
             let val = parseInt(input.value) || 0;
-            val += (event.deltaY < 0 ? 2 : -2);
+            val += (event.deltaY < 0 ? 1 : -1);
             val = Math.max(0, Math.min(95, val));
             onCropRangeInput(axis, bound, val);
         }
@@ -1466,12 +1432,8 @@ HTML_TEMPLATE = """
                 cropState[`${axis}_max`] = Math.max(val, cropState[`${axis}_min`]);
             }
 
-            if (!cropState.enabled) {
-                toggleCropEnabled(true);
-            } else {
-                syncCropUI();
-                applyCropView(true);
-            }
+            syncCropUI();
+            applyCropView(true);
         }
 
         function onCropSliderInput(axis, bound, valStr) {
@@ -1490,12 +1452,8 @@ HTML_TEMPLATE = """
                 cropState[`${axis}_max`] = val;
             }
 
-            if (!cropState.enabled) {
-                toggleCropEnabled(true);
-            } else {
-                syncCropUI();
-                applyCropView(true);
-            }
+            syncCropUI();
+            applyCropView(true);
         }
 
         function setCropPresetValues(z0, z1, y0, y1, x0, x1) {
@@ -1509,11 +1467,8 @@ HTML_TEMPLATE = """
 
         function setCropPreset(z0, z1, y0, y1, x0, x1) {
             setCropPresetValues(z0, z1, y0, y1, x0, x1);
-            if (!cropState.enabled) toggleCropEnabled(true);
-            else {
-                syncCropUI();
-                applyCropView(false);
-            }
+            syncCropUI();
+            applyCropView(false);
             centerCameraOnCrop();
         }
 
@@ -1544,30 +1499,24 @@ HTML_TEMPLATE = """
                 Math.max(0, minX - pad), Math.min(95, maxX + pad)
             );
 
-            if (!cropState.enabled) toggleCropEnabled(true);
-            else {
-                syncCropUI();
-                applyCropView(false);
-            }
+            syncCropUI();
+            applyCropView(false);
             centerCameraOnCrop();
         }
 
         function resetCrop() {
             setCropPresetValues(0, 95, 0, 95, 0, 95);
-            toggleCropEnabled(false);
+            syncCropUI();
+            applyCropView(false);
             if (controls) controls.target.set(48, 48, 48);
         }
 
         function centerCameraOnCrop() {
             if (!controls) return;
-            if (cropState.enabled) {
-                const cx = (cropState.x_min + cropState.x_max + 1) / 2;
-                const cy = (cropState.y_min + cropState.y_max + 1) / 2;
-                const cz = (cropState.z_min + cropState.z_max + 1) / 2;
-                controls.target.set(cx, cy, cz);
-            } else {
-                controls.target.set(48, 48, 48);
-            }
+            const cx = (cropState.x_min + cropState.x_max + 1) / 2;
+            const cy = (cropState.y_min + cropState.y_max + 1) / 2;
+            const cz = (cropState.z_min + cropState.z_max + 1) / 2;
+            controls.target.set(cx, cy, cz);
         }
 
         function syncCropUI() {
@@ -1596,7 +1545,7 @@ HTML_TEMPLATE = """
             const badge = document.getElementById('crop-stats-badge');
             const dimText = document.getElementById('crop-dim-text');
 
-            if (cropState.enabled) {
+            if (!isCropFull()) {
                 if (badge) badge.innerHTML = `<strong style="color:var(--accent-cyan);">ROI: ${dz}×${dy}×${dx} (${volPct}%)</strong>`;
                 if (dimText) dimText.innerText = `Sub-box: ${dz} × ${dy} × ${dx} vx`;
             } else {
@@ -1606,21 +1555,14 @@ HTML_TEMPLATE = """
         }
 
         function applyCropView(debounce = true) {
-            const z0 = cropState.enabled ? cropState.z_min : 0;
-            const z1 = cropState.enabled ? cropState.z_max : 95;
-            const y0 = cropState.enabled ? cropState.y_min : 0;
-            const y1 = cropState.enabled ? cropState.y_max : 95;
-            const x0 = cropState.enabled ? cropState.x_min : 0;
-            const x1 = cropState.enabled ? cropState.x_max : 95;
-
-            updateThreeCropBoxGeometry(z0, z1, y0, y1, x0, x1);
+            updateThreeCropBoxGeometry(cropState.z_min, cropState.z_max, cropState.y_min, cropState.y_max, cropState.x_min, cropState.x_max);
             updateThreePointCloud();
             updateThreeSeeds();
 
             if (cropDebounceTimer) clearTimeout(cropDebounceTimer);
 
             if (debounce) {
-                cropDebounceTimer = setTimeout(fetchCroppedData, 80);
+                cropDebounceTimer = setTimeout(fetchCroppedData, 50);
             } else {
                 fetchCroppedData();
             }
@@ -1629,7 +1571,7 @@ HTML_TEMPLATE = """
         async function fetchCroppedData() {
             if (!currentPatchData) return;
 
-            if (!cropState.enabled) {
+            if (isCropFull()) {
                 updateThreeFaceTextures(currentPatchData.face_images, currentPatchData.face_images_rgba);
                 return;
             }
@@ -1701,19 +1643,6 @@ HTML_TEMPLATE = """
             globalWireMesh = new THREE.Mesh(globalBoxGeo, globalWireMat);
             globalWireMesh.position.set(48, 48, 48);
             scene.add(globalWireMesh);
-
-            // 2. Active Crop Wireframe Box (Bright cyan highlight)
-            const cropBoxGeo = new THREE.BoxGeometry(96, 96, 96);
-            const cropWireMat = new THREE.MeshBasicMaterial({
-                color: 0x00e5ff,
-                wireframe: true,
-                transparent: true,
-                opacity: 0.85
-            });
-            cropWireMesh = new THREE.Mesh(cropBoxGeo, cropWireMat);
-            cropWireMesh.position.set(48, 48, 48);
-            cropWireMesh.visible = false;
-            scene.add(cropWireMesh);
 
             createThreeFacePlanes();
 
@@ -1834,15 +1763,6 @@ HTML_TEMPLATE = """
         }
 
         function updateThreeCropBoxGeometry(z0, z1, y0, y1, x0, x1) {
-            if (cropWireMesh) {
-                cropWireMesh.visible = cropState.enabled;
-                if (cropState.enabled) {
-                    cropWireMesh.geometry.dispose();
-                    cropWireMesh.geometry = new THREE.BoxGeometry(x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
-                    cropWireMesh.position.set((x0 + x1 + 1) / 2, (y0 + y1 + 1) / 2, (z0 + z1 + 1) / 2);
-                }
-            }
-
             faceMeshes.forEach(mesh => {
                 const name = mesh.userData.faceName;
                 const quad = getFaceQuadVertices(name, z0, z1, y0, y1, x0, x1);
@@ -1879,7 +1799,7 @@ HTML_TEMPLATE = """
 
         function toggleTransparency(enabled) {
             isTransparentMode = enabled;
-            if (cropState.enabled) {
+            if (!isCropFull()) {
                 fetchCroppedData();
             } else if (currentPatchData) {
                 updateThreeFaceTextures(currentPatchData.face_images, currentPatchData.face_images_rgba);
@@ -1907,12 +1827,12 @@ HTML_TEMPLATE = """
                 const faceName = hit.object.userData.faceName;
                 const pt = hit.point;
 
-                const z0 = cropState.enabled ? cropState.z_min : 0;
-                const z1 = cropState.enabled ? cropState.z_max : 95;
-                const y0 = cropState.enabled ? cropState.y_min : 0;
-                const y1 = cropState.enabled ? cropState.y_max : 95;
-                const x0 = cropState.enabled ? cropState.x_min : 0;
-                const x1 = cropState.enabled ? cropState.x_max : 95;
+                const z0 = cropState.z_min;
+                const z1 = cropState.z_max;
+                const y0 = cropState.y_min;
+                const y1 = cropState.y_max;
+                const x0 = cropState.x_min;
+                const x1 = cropState.x_max;
 
                 let z = Math.max(z0, Math.min(z1, Math.round(pt.z)));
                 let y = Math.max(y0, Math.min(y1, Math.round(pt.y)));
@@ -1988,21 +1908,19 @@ HTML_TEMPLATE = """
             ctx.fill();
 
             ctx.fillStyle = '#ffffff';
-            ctx.font = `900 ${fiberId > 99 ? 42 : (fiberId > 9 ? 54 : 66)}px "JetBrains Mono", Arial, sans-serif`;
+            ctx.font = 'bold 44px monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(`${fiberId}`, 64, 66);
+            ctx.fillText(String(fiberId), 64, 66);
 
             const texture = new THREE.CanvasTexture(canvas);
-            texture.minFilter = THREE.LinearFilter;
-            const mat = new THREE.SpriteMaterial({
+            const spriteMat = new THREE.SpriteMaterial({
                 map: texture,
-                depthTest: false,
                 transparent: true,
-                opacity: 1.0
+                depthTest: false
             });
-            const sprite = new THREE.Sprite(mat);
-            sprite.scale.set(7.5, 7.5, 1.0);
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.scale.set(6, 6, 1);
             return sprite;
         }
 
@@ -2017,12 +1935,12 @@ HTML_TEMPLATE = """
                 }
             }
 
-            const z0 = cropState.enabled ? cropState.z_min : 0;
-            const z1 = cropState.enabled ? cropState.z_max : 95;
-            const y0 = cropState.enabled ? cropState.y_min : 0;
-            const y1 = cropState.enabled ? cropState.y_max : 95;
-            const x0 = cropState.enabled ? cropState.x_min : 0;
-            const x1 = cropState.enabled ? cropState.x_max : 95;
+            const z0 = cropState.z_min;
+            const z1 = cropState.z_max;
+            const y0 = cropState.y_min;
+            const y1 = cropState.y_max;
+            const x0 = cropState.x_min;
+            const x1 = cropState.x_max;
 
             seedsList.forEach(s => {
                 const z = s.pos3d[0];
@@ -2030,8 +1948,7 @@ HTML_TEMPLATE = """
                 const x = s.pos3d[2];
 
                 const isInside = (z >= z0 && z <= z1 && y >= y0 && y <= y1 && x >= x0 && x <= x1);
-                // When crop ROI is active, completely hide any seed located outside the crop box
-                if (cropState.enabled && !isInside) {
+                if (!isInside) {
                     return;
                 }
 
@@ -2110,12 +2027,12 @@ HTML_TEMPLATE = """
 
             if (!rawPointCloudFull || rawPointCloudFull.length === 0) return;
 
-            const z0 = cropState.enabled ? cropState.z_min : 0;
-            const z1 = cropState.enabled ? cropState.z_max : 95;
-            const y0 = cropState.enabled ? cropState.y_min : 0;
-            const y1 = cropState.enabled ? cropState.y_max : 95;
-            const x0 = cropState.enabled ? cropState.x_min : 0;
-            const x1 = cropState.enabled ? cropState.x_max : 95;
+            const z0 = cropState.z_min;
+            const z1 = cropState.z_max;
+            const y0 = cropState.y_min;
+            const y1 = cropState.y_max;
+            const x0 = cropState.x_min;
+            const x1 = cropState.x_max;
 
             const filtered = rawPointCloudFull.filter(p => 
                 p[0] >= z0 && p[0] <= z1 &&
@@ -2242,12 +2159,7 @@ HTML_TEMPLATE = """
                 updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
 
                 rawPointCloudFull = data.point_cloud || [];
-                if (cropState.enabled) {
-                    applyCropView(false);
-                } else {
-                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                    updateThreePointCloud(rawPointCloudFull);
-                }
+                applyCropView(false);
 
                 activeFiberId = 1;
                 renderThree3DCurves(null);
@@ -2309,13 +2221,7 @@ HTML_TEMPLATE = """
                 updateSidebarInfo(data.origin, data.density, data.curated_total, `Loaded #${String(patchId).padStart(4, '0')} (${data.num_fibers} Fibers)`);
 
                 rawPointCloudFull = data.point_cloud || [];
-
-                if (cropState.enabled) {
-                    applyCropView(false);
-                } else {
-                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                    updateThreePointCloud(rawPointCloudFull);
-                }
+                applyCropView(false);
 
                 renderThree3DCurves(data.curves_3d);
                 updateThreeSeeds();
@@ -2349,13 +2255,7 @@ HTML_TEMPLATE = """
                 updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
 
                 rawPointCloudFull = data.point_cloud || [];
-
-                if (cropState.enabled) {
-                    applyCropView(false);
-                } else {
-                    updateThreeFaceTextures(data.face_images, data.face_images_rgba);
-                    updateThreePointCloud(rawPointCloudFull);
-                }
+                applyCropView(false);
 
                 activeFiberId = 1;
                 renderThree3DCurves(null);
@@ -2446,7 +2346,7 @@ HTML_TEMPLATE = """
 
             try {
                 document.getElementById('perf-badge').innerText = '⏳ Resolving Geodesic Paths...';
-                const cropBounds = cropState.enabled ? [cropState.z_min, cropState.z_max, cropState.y_min, cropState.y_max, cropState.x_min, cropState.x_max] : null;
+                const cropBounds = isCropFull() ? null : [cropState.z_min, cropState.z_max, cropState.y_min, cropState.y_max, cropState.x_min, cropState.x_max];
 
                 const res = await fetch('/api/resolve', {
                     method: 'POST',
@@ -2509,7 +2409,7 @@ HTML_TEMPLATE = """
             } else if (e.key === 'f' || e.key === 'F') {
                 focusActiveFiberCrop();
             } else if (e.key === 'c' || e.key === 'C') {
-                toggleCropEnabled(!cropState.enabled);
+                resetCrop();
             } else if (e.key >= '1' && e.key <= '9') {
                 setActiveId(parseInt(e.key));
             } else if (e.key === '0') {

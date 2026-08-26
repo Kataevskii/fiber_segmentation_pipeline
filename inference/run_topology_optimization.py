@@ -21,10 +21,13 @@ import time
 import argparse
 import gc
 import shutil
+from collections import defaultdict
 import numpy as np
 from scipy.ndimage import gaussian_filter, convolve
 from skimage.morphology import skeletonize
 from scipy.spatial import cKDTree
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 from tqdm import tqdm
 
 # Ensure package root is in path
@@ -35,8 +38,9 @@ from topology_optimizer.step2_bridge_gaps import find_bridge_candidates
 from topology_optimizer.step3_build_fragment_graph import build_fragment_graph, FiberFragment
 from topology_optimizer.step4_optimize_topology import optimize_topology
 from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi
+from topology_optimizer.clean_border_artifacts import crop_and_separate_border_fibers, separate_broken_fibers
 from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad, compute_metrics
-from topology_optimizer.visualize_results import save_diagnostic_slices, save_fiber_length_histogram, save_metrics_text
+from topology_optimizer.visualize_results import save_diagnostic_slices, save_fiber_length_histogram, save_metrics_text, export_uint16_tiff
 
 
 class UnionFind:
@@ -83,6 +87,10 @@ DEFAULT_PARAMS = dict(
     # Step 5: Diffusion
     min_chain_length  = 1,
     fg_threshold      = 0.10,
+
+    # Border cleaning
+    cut_border        = 0,
+    border_mode       = 'crop',
 )
 
 
@@ -153,13 +161,15 @@ def run_direct_topology_optimization(
         print(f"  Pruning spurs ({params['spur_pruning_steps']} iterations)...", flush=True)
         for _ in range(params['spur_pruning_steps']):
             skel_u8 = skel.astype(np.uint8)
-            n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
-            endpoints = skel & (n_count == 1)
+            convolve(skel_u8, struct26, output=skel_u8, mode='constant', cval=0)
+            endpoints = skel & (skel_u8 == 2)
+            del skel_u8
             if not endpoints.any():
+                del endpoints
                 break
             skel[endpoints] = False
-        del skel_u8, n_count
-        gc.collect()
+            del endpoints
+            gc.collect()
 
     n_skel_vox = int(skel.sum())
     print(f"  Skeleton extracted: {n_skel_vox} voxels in {time.time()-t1:.1f}s", flush=True)
@@ -167,6 +177,25 @@ def run_direct_topology_optimization(
     if n_skel_vox == 0:
         print("  [Warning] Skeleton is empty. Check threshold parameters.", flush=True)
         return {'N_final_fibers': 0, 'Total_pipeline_runtime_sec': float(time.time() - t_total)}
+
+    # Border margin cut (Option 1): Cuts border margin from full skeleton & volumes before
+    # graph construction to cleanly sever edge boundary merger loops and prevent hairpins.
+    cut_b = params.get('cut_border', 0)
+    if cut_b > 0:
+        mz = my = mx = cut_b
+        out_D = D - 2 * mz
+        out_H = H - 2 * my
+        out_W = W - 2 * mx
+        print(f"\n  Cutting border margin ({cut_b} px) from skeleton & volumes before optimization: ({D}, {H}, {W}) -> ({out_D}, {out_H}, {out_W})", flush=True)
+        skel = skel[mz:D-mz, my:H-my, mx:W-mx]
+        intensity = intensity[mz:D-mz, my:H-my, mx:W-mx]
+        volume = volume[mz:D-mz, my:H-my, mx:W-mx]
+        ori_z = ori_z[mz:D-mz, my:H-my, mx:W-mx]
+        ori_y = ori_y[mz:D-mz, my:H-my, mx:W-mx]
+        ori_x = ori_x[mz:D-mz, my:H-my, mx:W-mx]
+        D, H, W = out_D, out_H, out_W
+        n_skel_vox = int(skel.sum())
+        print(f"  Cropped skeleton: {n_skel_vox} voxels retained in clean inner domain", flush=True)
 
     # -------------------------------------------------------------------------
     # STAGE 2: Orientation-Decoupled Transverse H-Severing
@@ -201,6 +230,7 @@ def run_direct_topology_optimization(
         ori_z=ori_z, ori_y=ori_y, ori_x=ori_x,
         min_fragment_length=params['min_fragment_length'],
         verbose=verbose,
+        return_seg_labels=False,
     )
     del clean_skel
     gc.collect()
@@ -268,19 +298,16 @@ def run_direct_topology_optimization(
     )
     inst_skel.flush()
 
-    fg_mask = (volume > 0.05) | (intensity >= params['fg_threshold'])
     inst_vol = np.lib.format.open_memmap(inst_vol_path, mode='w+', dtype=np.int32, shape=(D, H, W))
-
     diffuse_labels_voronoi(
         inst_skel=inst_skel,
-        fg_mask=fg_mask,
+        volume=volume,
+        intensity=intensity,
+        fg_threshold=params['fg_threshold'],
         out_vol_mmap=inst_vol,
         chunk_size=1000000,
         verbose=verbose
     )
-    del fg_mask
-    gc.collect()
-
     inst_vol.flush()
     print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers in final volume", flush=True)
 
@@ -288,8 +315,14 @@ def run_direct_topology_optimization(
     # STAGE 7: Diagnostics & Visualizations
     # -------------------------------------------------------------------------
     print("\n" + "=" * 85, flush=True)
-    print(" STAGE 7: Generating Diagnostic Previews & Metrics Report", flush=True)
+    print(" STAGE 7: Exporting uint16 TIFF & Generating Diagnostic Previews", flush=True)
     print("=" * 85, flush=True)
+
+    # Export final outputs as uint16 TIFF
+    inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
+    inst_skel_tif_path = os.path.join(out_dir, 'instance_skeleton.tif')
+    export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
+    export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
 
     viz_dir = os.path.join(out_dir, 'slices')
     save_diagnostic_slices(
@@ -300,6 +333,7 @@ def run_direct_topology_optimization(
         out_dir=viz_dir,
         n_slices=8,
         axis=0,
+        n_max_label=n_kept_chains,
     )
 
     chain_lengths = [c.total_length for c in chains if c.total_length >= params['min_chain_length']]
@@ -311,6 +345,10 @@ def run_direct_topology_optimization(
         'Mean_fiber_length_voxels': float(np.mean(chain_lengths)) if chain_lengths else 0,
         'Max_fiber_length_voxels': float(max(chain_lengths)) if chain_lengths else 0,
         'Total_pipeline_runtime_sec': total_runtime,
+        'instance_volume_npy': inst_vol_path,
+        'instance_volume_tif': inst_vol_tif_path,
+        'instance_skeleton_npy': inst_skel_path,
+        'instance_skeleton_tif': inst_skel_tif_path,
     }
     save_metrics_text(metrics, os.path.join(out_dir, 'metrics.txt'))
 
@@ -319,8 +357,10 @@ def run_direct_topology_optimization(
     print(f"  - Final Continuous Fibers Resolved:  {n_kept_chains}")
     print(f"  - Mean Fiber Length:                 {metrics['Mean_fiber_length_voxels']:.1f} voxels")
     print(f"  - Max Fiber Length:                  {metrics['Max_fiber_length_voxels']:.1f} voxels")
-    print(f"  - Instance Volume Array:             {inst_vol_path}")
-    print(f"  - Labeled Skeleton Array:            {inst_skel_path}")
+    print(f"  - Instance Volume Array (npy):       {inst_vol_path}")
+    print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
+    print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
+    print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
     print(f"  - Diagnostic Slices:                 {viz_dir}")
     print("=" * 85 + "\n", flush=True)
 
@@ -368,6 +408,22 @@ def run_chunked_topology_optimization(
         ori_is_last = False
     else:
         raise ValueError(f"Unexpected orientation shape: {orientation.shape}")
+
+    # Border margin cut: Slices inputs before chunking to eliminate edge artifacts
+    cut_b = params.get('cut_border', 0)
+    if cut_b > 0:
+        mz = my = mx = cut_b
+        out_D = D - 2 * mz
+        out_H = H - 2 * my
+        out_W = W - 2 * mx
+        print(f"  Cutting border margin ({cut_b} px) from inputs before chunking: ({D}, {H}, {W}) -> ({out_D}, {out_H}, {out_W})", flush=True)
+        intensity = intensity[mz:D-mz, my:H-my, mx:W-mx]
+        volume = volume[mz:D-mz, my:H-my, mx:W-mx]
+        if ori_is_last:
+            orientation = orientation[mz:D-mz, my:H-my, mx:W-mx, :]
+        else:
+            orientation = orientation[:, mz:D-mz, my:H-my, mx:W-mx]
+        D, H, W = out_D, out_H, out_W
 
     # Build overlapping chunk grid
     step_z = max(1, chunk_size - overlap)
@@ -437,11 +493,14 @@ def run_chunked_topology_optimization(
 
         for _ in range(params['spur_pruning_steps']):
             skel_u8 = sub_skel.astype(np.uint8)
-            n_count = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
-            endpoints = sub_skel & (n_count == 1)
+            convolve(skel_u8, struct26, output=skel_u8, mode='constant', cval=0)
+            endpoints = sub_skel & (skel_u8 == 2)
+            del skel_u8
             if not endpoints.any():
+                del endpoints
                 break
             sub_skel[endpoints] = False
+            del endpoints
 
         sub_clean_skel = sever_h_junctions(
             skeleton=sub_skel,
@@ -661,6 +720,12 @@ def run_chunked_topology_optimization(
 
     shutil.rmtree(tmp_chunk_dir, ignore_errors=True)
 
+    # Export final outputs as uint16 TIFF
+    inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
+    inst_skel_tif_path = os.path.join(out_dir, 'instance_skeleton.tif')
+    export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
+    export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
+
     # Diagnostics
     viz_dir = os.path.join(out_dir, 'slices')
     save_diagnostic_slices(
@@ -684,8 +749,24 @@ def run_chunked_topology_optimization(
         'Mean_fiber_length_voxels': float(np.mean(chain_lengths)) if chain_lengths else 0,
         'Max_fiber_length_voxels': float(max(chain_lengths)) if chain_lengths else 0,
         'Total_pipeline_runtime_sec': total_runtime,
+        'instance_volume_npy': inst_vol_path,
+        'instance_volume_tif': inst_vol_tif_path,
+        'instance_skeleton_npy': inst_skel_path,
+        'instance_skeleton_tif': inst_skel_tif_path,
     }
     save_metrics_text(metrics, os.path.join(out_dir, 'metrics.txt'))
+
+    print("\n" + "=" * 85, flush=True)
+    print(f" CHUNKED TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
+    print(f"  - Final Continuous Fibers Resolved:  {len(chain_lengths)}")
+    print(f"  - Mean Fiber Length:                 {metrics['Mean_fiber_length_voxels']:.1f} voxels")
+    print(f"  - Max Fiber Length:                  {metrics['Max_fiber_length_voxels']:.1f} voxels")
+    print(f"  - Instance Volume Array (npy):       {inst_vol_path}")
+    print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
+    print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
+    print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
+    print(f"  - Diagnostic Slices:                 {viz_dir}")
+    print("=" * 85 + "\n", flush=True)
 
     return metrics
 
@@ -741,11 +822,16 @@ if __name__ == '__main__':
     parser.add_argument('--sigma-prefilter', type=float, default=0.60, help="Gaussian smoothing sigma before skeletonization (default: 0.60)")
     parser.add_argument('--core-threshold', type=float, default=0.28, help="Potential field threshold for centerline core extraction (default: 0.28)")
     parser.add_argument('--gad', default=None, help="Optional path to GAD ground truth file")
+    parser.add_argument('--cut-border', type=int, default=0, help="Optional margin in voxels (e.g. 32) to cut from each face and separate broken fibers")
+    parser.add_argument('--border-mode', type=str, default='crop', choices=['crop', 'zero'],
+                        help="Border cut mode: 'crop' (default, trims shape) or 'zero' (preserves shape, zeroes boundary)")
     args = parser.parse_args()
 
     params = DEFAULT_PARAMS.copy()
     params['sigma_prefilter'] = args.sigma_prefilter
     params['core_threshold'] = args.core_threshold
+    params['cut_border'] = args.cut_border
+    params['border_mode'] = args.border_mode
 
     run_topology_optimization(
         intensity_path=args.intensity,

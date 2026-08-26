@@ -38,8 +38,13 @@ This cleanly handles all cases:
   - Real fiber endpoint: no long neighbors -> KEEP
 """
 
+import gc
 import numpy as np
-from scipy.ndimage import convolve, label as nd_label, binary_dilation
+from scipy.ndimage import convolve, label as nd_label
+from scipy.spatial import cKDTree
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
+from collections import defaultdict
 
 
 def sever_h_junctions(
@@ -70,21 +75,28 @@ def sever_h_junctions(
     -------
     clean_skeleton : (D, H, W) bool
     """
+    D, H, W = skeleton.shape
     struct26      = np.ones((3, 3, 3), dtype=np.uint8)
     struct26_bool = np.ones((3, 3, 3), dtype=bool)
 
     # ------------------------------------------------------------------ #
     # Step 1: label all branch segments (non-junction components)         #
     # ------------------------------------------------------------------ #
-    skel_u8  = skeleton.astype(np.uint8)
-    n_count  = convolve(skel_u8, struct26, mode='constant', cval=0) - skel_u8
-    junc_mask = skeleton & (n_count >= 3)
+    skel_u8 = skeleton.astype(np.uint8)
+    convolve(skel_u8, struct26, output=skel_u8, mode='constant', cval=0)
+    # At skeleton voxels, skel_u8 is (neighbor_count + 1). Junctions have >= 3 neighbors, so >= 4.
+    junc_mask = skeleton & (skel_u8 >= 4)
     non_junc  = skeleton & ~junc_mask
+    del skel_u8
+    gc.collect()
 
     labeled_branches, n_branches = nd_label(non_junc, structure=struct26_bool)
+    del non_junc
+    gc.collect()
 
+    n_junc_vox = int(junc_mask.sum())
     if verbose:
-        print(f"  [H-sever] {int(junc_mask.sum())} junction voxels, "
+        print(f"  [H-sever] {n_junc_vox} junction voxels, "
               f"{n_branches} branch segments.", flush=True)
 
     if n_branches == 0:
@@ -131,23 +143,43 @@ def sever_h_junctions(
     # Step 4: build branch adjacency THROUGH junction clusters            #
     # Branches are separated by junction voxels; branches that touch the  #
     # same junction cluster are adjacent neighbors.                       #
+    # Sparse graph & local window search: 0 MB memory overhead            #
     # ------------------------------------------------------------------ #
-    from scipy.ndimage import maximum_filter
-    from collections import defaultdict
-
-    labeled_juncs, n_juncs = nd_label(junc_mask, structure=struct26_bool)
-    dilated_juncs = maximum_filter(labeled_juncs, size=3, mode='constant', cval=0)
-
-    touch_mask = (dilated_juncs > 0) & non_junc
-    t_junc = dilated_juncs[touch_mask]
-    t_branch = labeled_branches[touch_mask]
-    touch_pairs = np.unique(np.column_stack([t_junc, t_branch]), axis=0)
+    jz, jy, jx = np.where(junc_mask)
+    del junc_mask
+    gc.collect()
 
     branch_to_juncs = defaultdict(set)
     junc_to_branches = defaultdict(set)
-    for jid, bid in touch_pairs:
-        branch_to_juncs[bid].add(jid)
-        junc_to_branches[jid].add(bid)
+
+    if len(jz) > 0:
+        junc_coords = np.column_stack([jz, jy, jx])
+        tree = cKDTree(junc_coords)
+        pairs = tree.query_pairs(r=1.0, p=np.inf)
+
+        if len(pairs) > 0:
+            row, col = zip(*pairs)
+            n_pts = len(junc_coords)
+            adj_mat = csr_matrix((np.ones(len(row), dtype=bool), (row, col)), shape=(n_pts, n_pts))
+            _, junc_labels = connected_components(adj_mat, directed=False)
+        else:
+            junc_labels = np.arange(len(junc_coords))
+
+        for k in range(len(junc_coords)):
+            cz, cy, cx = int(jz[k]), int(jy[k]), int(jx[k])
+            jid = int(junc_labels[k]) + 1
+            z0, z1 = max(0, cz - 1), min(D, cz + 2)
+            y0, y1 = max(0, cy - 1), min(H, cy + 2)
+            x0, x1 = max(0, cx - 1), min(W, cx + 2)
+            touching_bids = np.unique(labeled_branches[z0:z1, y0:y1, x0:x1])
+            for bid in touching_bids:
+                if bid > 0:
+                    branch_to_juncs[bid].add(jid)
+                    junc_to_branches[jid].add(bid)
+
+    # We are completely done with labeled_branches (free 8.4 GB!)
+    del labeled_branches
+    gc.collect()
 
     adjacency: list[set] = [set() for _ in range(n_branches + 1)]
     for jid, br_set in junc_to_branches.items():
@@ -212,7 +244,7 @@ def sever_h_junctions(
         neighbors = adjacency[bid]
         long_neighbors = [nb for nb in neighbors if int(branch_sizes[nb]) >= min_neighbor_length]
         if long_neighbors:
-            trunk_ori_vecs = branch_mean_ori[long_neighbors]
+            trunk_ori_vecs = branch_mean_ori[long_neighbors].copy()
             ref = trunk_ori_vecs[0]
             for k in range(1, len(trunk_ori_vecs)):
                 if np.dot(trunk_ori_vecs[k], ref) < 0:
@@ -228,11 +260,16 @@ def sever_h_junctions(
                     continue
 
     # ------------------------------------------------------------------ #
-    # Step 6: remove severed branches                                     #
+    # Step 6: remove severed branches (coordinate-based, 0 GB overhead)   #
     # ------------------------------------------------------------------ #
     clean_skel = skeleton.copy()
-    rung_voxels = sever_mask[labeled_branches] & (labeled_branches > 0)
-    clean_skel[rung_voxels] = False
+    severed_bids_set = set(np.where(sever_mask)[0])
+    for idx, bid in enumerate(unique_bids):
+        if int(bid) in severed_bids_set:
+            cz_s = coord_z_splits[idx]
+            cy_s = coord_y_splits[idx]
+            cx_s = coord_x_splits[idx]
+            clean_skel[cz_s, cy_s, cx_s] = False
 
     if verbose:
         print(f"  [H-sever] Severed {severed_count} H-junction rungs "

@@ -11,7 +11,9 @@ A complete deep learning and geometric graph optimization framework for high-res
 - [Framework Architecture](#framework-architecture)
 - [Topology Optimization Formulation](#topology-optimization-formulation)
 - [Why H-Junctions Occur and How They Are Resolved](#why-h-junctions-occur-and-how-they-are-resolved)
+- [Border Margin Trimming & Boundary Hairpin Elimination (`--cut-border`)](#border-margin-trimming--boundary-hairpin-elimination---cut-border)
 - [Interactive 3D Curation Web App & Engine](#interactive-3d-curation-web-app--engine)
+- [Export Formats (Memory-Mapped NPY & 16-bit TIFF)](#export-formats-memory-mapped-npy--16-bit-tiff)
 - [Directory Structure](#directory-structure)
 - [Quick Start & Usage Guide](#quick-start--usage-guide)
   - [1. Dataset Precomputation](#1-dataset-precomputation)
@@ -94,14 +96,17 @@ To eliminate the synthetic-to-real domain gap without requiring thousands of man
                                        │
     ┌──────────────────────────────────┴──────────────────────────────────┐
     ▼                                                                     ▼
-1. 3D Medial Axis Thinning & Spur Pruning             2. Transverse H-Severing (perp > 0.50)
+1. 3D Thinning (Full Boundary Context)                2. Context-Preserving Margin Cut (--cut-border)
     ▼                                                                     ▼
-3. Fragment Graph & Durable Endpoints                 4. Post-H-Sever Bridge Candidate Search
+3. Transverse H-Severing (perp > 0.50)                4. Fragment Graph & Durable Endpoints
     ▼                                                                     ▼
-5. Min-Cost Global Matching (Degree=1)                6. Multi-Label Voronoi Diffusion
+5. Direction-Durable Gap Search                       6. Min-Cost Global Matching (Degree=1)
+    ▼                                                                     ▼
+7. Multi-Label Voronoi Diffusion                      8. Dual Export (.npy + uint16 .tif)
                                        │
                                        ▼
-                       Final 3D Labeled Fiber Instances
+                     Final 3D Labeled Fiber Instances & Centerlines
+                        (instance_volume.tif / .npy, instance_skeleton.tif / .npy)
 ```
 
 ---
@@ -144,13 +149,62 @@ In the data augmentation pipeline ([`core/dataset.py`](core/dataset.py)), we enf
 
 ---
 
+## ✂️ Border Margin Trimming & Boundary Hairpin Elimination (`--cut-border`)
+
+### Why Boundary Hairpins Occur:
+In 3D sliding-window neural network inference, the outermost margins of the volume ($M \approx 16\text{–}32\text{ voxels}$) can suffer from edge padding artifacts and boundary blur. When two parallel biological fibers travel side-by-side toward a volume face ($Y=0, X=0, Z=0$), boundary merge artifacts can connect their endpoints into an artificial **180° U-turn loop (hairpin)**.
+
+If topology optimization is run on the uncropped domain:
+1. The global optimizer traces through this outer boundary loop and unifies both parallel fibers into a **single continuous chain**.
+2. Multi-label Voronoi diffusion then floods both fiber tracks across the entire volume with the same instance label ID.
+3. Cropping the volume *after* diffusion removes the outer loop apex, but leaves the two parallel tracks fused under the same label.
+
+### The Context-Preserving Pre-Cut Solution:
+When `--cut-border <M>` (e.g. `--cut-border 32`) is passed:
+1. **Stage 1 (Centerline Thinning)** runs on the **full volume with full 3D boundary context**, ensuring mathematical centerlines are accurately centered up to the cut plane.
+2. **Pre-Optimization Slicing**: The binary skeleton and memory-mapped input volumes are trimmed by $M$ voxels (`skel = skel[M:D-M, M:H-M, M:W-M]`) **before** Stage 2 (H-severing) and Stage 3 (Fragment Graph Construction).
+3. The outer boundary loops are **completely eliminated before any graph nodes or bridge candidates are created**.
+4. The two incoming strands become **two distinct, independent endpoints** that are resolved as separate straight fibers (e.g. splitting a false 354-vx hairpin into two clean 176-vx tracks).
+
+```
+Full Volume (564³) [Full 3D Context]
+      │
+      ▼
+Stage 1: Medial Axis Thinning & Spur Pruning
+      │
+      ▼
+✂️ Pre-Optimization Border Cut: skel[32:532, 32:532, 32:532] -> (500³)
+   └── Slices outer loops -> Turns merged hairpins into clean independent endpoints
+      │
+      ▼
+Stages 2–7: H-Severing, Fragment Graph, Topology Matching, Voronoi Diffusion on clean 500³
+```
+
+---
+
 ## 🛠️ Interactive 3D Curation Web App & Engine
 
 A WebGL-powered 3D annotation and geodesic solving suite located in `curation_tool/`:
 - **3D WebGL Bounding Box & Orbit Controls** (Three.js).
-- **Automated Geodesic Lane-Guided Routing** across 6 faces of the subvolume.
-- **2D Slice Paintbrush & Label Editor** (XY, XZ, YZ, MIP).
+- **Always-Active Visual Crop ROI**: Real-time volume slicing with 1-voxel slider & mouse-wheel precision (`step=1`) without distracting wireframe borders.
+- **Automated Geodesic Lane-Guided Routing** across 6 faces of the subvolume with sub-voxel auto-centering.
+- **2D Slice Paintbrush & Label Editor** (XY, XZ, YZ, MIP views).
 - **Multi-Target Supervised Patch Export** (`.vol`, `.centerline`, `.instance`, `.intensity`, `.ori`).
+
+---
+
+## 💾 Export Formats (Memory-Mapped NPY & 16-bit TIFF)
+
+The pipeline automatically exports all instance segmentation volumes and centerline skeletons in two complementary formats:
+
+| File | Format | Description |
+| :--- | :--- | :--- |
+| `instance_volume.tif` | `uint16` Compressed TIFF | 3D instance volume ready for **ImageJ / Fiji**, **napari**, **Dragonfly**, and **3D Slicer**. Supports streaming BigTIFF (>1 GB) with 0 GB RAM overhead. |
+| `instance_skeleton.tif` | `uint16` Compressed TIFF | 3D labeled centerline skeleton where each voxel value equals its fiber instance ID. |
+| `instance_volume.npy` | `int32` Memory-Mapped NPY | Fast zero-copy memory-mapped array for downstream Python scientific processing. |
+| `instance_skeleton.npy` | `int32` Memory-Mapped NPY | Memory-mapped centerline array. |
+| `slices/` | `.png` Slice Previews | Multi-slice diagnostic comparisons (Raw Volume, Potential Field, Final Instances). |
+| `fiber_length_histogram.png` | `.png` Distribution Plot | Histogram of resolved continuous fiber lengths. |
 
 ---
 
@@ -286,23 +340,32 @@ python inference/run_inference.py \
 Optimizes topology directly from precomputed intensity and orientation fields using **direct whole-volume degree-1 linear assignment matching** (memory-mapped, zero false merges):
 
 ```bash
-# Direct Global Optimization (degree <= 1, zero false merges)
+# Recommended: Direct Global Optimization with 32px boundary loop severing
 python inference/run_topology_optimization.py \
     --intensity outputs/dual_collagen_intensity.npy \
     --orientation outputs/dual_collagen_orientation.npy \
     --volume outputs/dual_collagen_volume.npy \
+    --cut-border 32 \
     --out outputs/topology_resolved_full
 
-# Optional: Chunked mode with overlap consensus
+# Optional: Chunked mode with overlap consensus for multi-gigavoxel volumes
 python inference/run_topology_optimization.py \
     --intensity outputs/dual_collagen_intensity.npy \
     --orientation outputs/dual_collagen_orientation.npy \
     --volume outputs/dual_collagen_volume.npy \
+    --cut-border 32 \
     --mode chunked \
     --chunk-size 512 \
     --overlap 256 \
     --out outputs/topology_resolved_full
 ```
+
+#### Output Artifacts:
+- `instance_volume.tif`: 16-bit compressed TIFF stack of segmented 3D fiber instances.
+- `instance_skeleton.tif`: 16-bit compressed TIFF stack of labeled 1-voxel mathematical centerlines.
+- `instance_volume.npy` & `instance_skeleton.npy`: Memory-mapped int32 NumPy volumes for rapid downstream analysis.
+- `slices/`: Diagnostic slice montages comparing raw input, potential field, and instance color maps.
+- `metrics.txt` & `fiber_length_histogram.png`: Global quantitative metrics and fiber length distribution.
 
 ---
 
@@ -312,5 +375,6 @@ Runs GPU neural inference on raw microscopy and executes full topology optimizat
 ```bash
 python run_end_to_end.py \
     --input process_data/COLLAGENCROP_003_0000.tif \
+    --cut-border 32 \
     --out outputs/collagen_resolved_final
 ```

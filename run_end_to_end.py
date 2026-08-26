@@ -22,7 +22,7 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from inference.run_inference import run_inference
-from inference.run_topology_optimization import run_topology_optimization
+from inference.run_topology_optimization import run_topology_optimization, DEFAULT_PARAMS
 
 
 def main():
@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--patch-size', type=int, default=64)
     parser.add_argument('--stride', type=int, default=32)
     parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--cut-border', type=int, default=32, help="Margin in voxels (e.g. 32) to sever outer boundary loops")
     parser.add_argument('--out', type=str, default='outputs/fiber_resolution_final')
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
     args = parser.parse_args()
@@ -58,11 +59,15 @@ def main():
     )
 
     # 2. Global Topology Optimization
+    opt_params = DEFAULT_PARAMS.copy()
+    opt_params['cut_border'] = args.cut_border
+
     metrics = run_topology_optimization(
         intensity_path=int_path,
         orientation_path=ori_path,
         volume_path=vol_path,
-        out_dir=args.out
+        out_dir=args.out,
+        params=opt_params
     )
 
     print("=" * 90)
