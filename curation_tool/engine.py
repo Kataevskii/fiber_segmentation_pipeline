@@ -16,11 +16,13 @@ from scipy.ndimage import (
 from scipy.spatial import cKDTree
 from scipy.interpolate import splprep, splev
 from skimage.graph import route_through_array
+from skimage.morphology import skeletonize
 
 class RealDataCurationEngine:
     """
     Deterministic 96x96x96 Real Data Annotation & Geodesic Curvature Resolution Engine.
-    Uses ONLY the thresholded 0,1 binary microscopy volume (zero model inference).
+    Supports both raw thresholded microscopy volumes AND pre-segmented instance volumes
+    with automatic skeletonization, endpoint extraction, and wiring correction.
     """
     def __init__(
         self,
@@ -28,20 +30,36 @@ class RealDataCurationEngine:
         curated_output_dir='real_train_data/curated_patches',
         cube_size=96
     ):
-        self.raw_volume_path = raw_volume_path
+        self.raw_volume_path = raw_volume_path.replace('\\', '/') if raw_volume_path else None
+        self.instance_volume_path = None
         self.curated_output_dir = curated_output_dir
         self.cube_size = cube_size
         os.makedirs(self.curated_output_dir, exist_ok=True)
 
-        print(f"Loading real microscopy volume from {self.raw_volume_path}...", flush=True)
-        if not os.path.exists(self.raw_volume_path):
-            raise FileNotFoundError(f"Microscopy volume not found: {self.raw_volume_path}")
+        self.full_instance_vol = None
+        self.full_instance_skel = None
 
-        raw_vol = tifffile.imread(self.raw_volume_path)
-        if raw_vol.dtype == bool:
-            self.full_vol = raw_vol
+        print(f"Loading initial volume from {self.raw_volume_path}...", flush=True)
+        if self.raw_volume_path and os.path.exists(self.raw_volume_path):
+            raw_vol = tifffile.imread(self.raw_volume_path)
+            if raw_vol.dtype == bool:
+                self.full_vol = raw_vol
+            else:
+                self.full_vol = raw_vol > (127 if raw_vol.max() > 1.0 else 0.5)
+            self.current_source_info = {
+                'name': os.path.basename(self.raw_volume_path),
+                'type': 'raw_microscopy',
+                'path': self.raw_volume_path,
+                'has_skeleton': False
+            }
         else:
-            self.full_vol = raw_vol > (127 if raw_vol.max() > 1.0 else 0.5)
+            self.full_vol = np.zeros((cube_size, cube_size, cube_size), dtype=bool)
+            self.current_source_info = {
+                'name': 'None',
+                'type': 'empty',
+                'path': '',
+                'has_skeleton': False
+            }
 
         self.D, self.H, self.W = self.full_vol.shape
         print(f"Loaded volume shape: ({self.D}, {self.H}, {self.W}), overall density: {np.mean(self.full_vol):.4f}", flush=True)
@@ -58,7 +76,223 @@ class RealDataCurationEngine:
         self.current_resolution = None
         self.patch_counter = len([f for f in os.listdir(self.curated_output_dir) if f.endswith('_vol.npy')])
 
-    def extract_random_patch(self, min_density=0.03, max_density=0.25, max_attempts=50):
+    def open_volume_file(self, file_path, raw_path=None, z=None, y=None, x=None):
+        """
+        Dynamically loads a new 3D volume (.tif, .tiff, .npy).
+        Automatically detects whether file_path is:
+          - A segmented instance volume (e.g. integer labels > 1): enables auto-skeletonization and fiber wiring extraction.
+          - A raw microscopy volume (binary or grayscale).
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        file_path_clean = file_path.replace('\\', '/')
+        file_ext = os.path.splitext(file_path)[1].lower()
+
+        # Load file
+        if file_ext == '.npy':
+            arr = np.load(file_path, mmap_mode='r')
+        else:
+            arr = tifffile.imread(file_path)
+
+        # Detect if it's a segmented instance volume
+        is_instance = False
+        if np.issubdtype(arr.dtype, np.integer) and arr.max() > 1:
+            is_instance = True
+        elif 'instance' in file_path_clean.lower() or 'seg' in file_path_clean.lower():
+            is_instance = True
+
+        if is_instance:
+            self.instance_volume_path = file_path_clean
+            self.full_instance_vol = arr
+            self.D, self.H, self.W = self.full_instance_vol.shape
+
+            # Look for matching skeleton file
+            skel_candidate = file_path_clean.replace('instance_volume', 'instance_skeleton').replace('_volume', '_skeleton')
+            if os.path.exists(skel_candidate):
+                print(f"Auto-detected matching skeleton file: {skel_candidate}", flush=True)
+                if skel_candidate.endswith('.npy'):
+                    self.full_instance_skel = np.load(skel_candidate, mmap_mode='r')
+                else:
+                    self.full_instance_skel = tifffile.imread(skel_candidate)
+            else:
+                self.full_instance_skel = None
+
+            # Raw volume pairing
+            if raw_path and os.path.exists(raw_path):
+                raw_arr = np.load(raw_path) if raw_path.endswith('.npy') else tifffile.imread(raw_path)
+                if raw_arr.shape == self.full_instance_vol.shape:
+                    self.full_vol = raw_arr > (127 if raw_arr.max() > 1.0 else 0.5)
+                    self.raw_volume_path = raw_path
+                else:
+                    self.full_vol = (self.full_instance_vol > 0)
+                    self.raw_volume_path = file_path_clean
+            else:
+                self.full_vol = (self.full_instance_vol > 0)
+                self.raw_volume_path = file_path_clean
+
+            self.current_source_info = {
+                'name': os.path.basename(file_path_clean),
+                'type': 'segmented_instance',
+                'path': file_path_clean,
+                'has_skeleton': self.full_instance_skel is not None
+            }
+        else:
+            self.raw_volume_path = file_path_clean
+            self.instance_volume_path = None
+            self.full_instance_vol = None
+            self.full_instance_skel = None
+            if arr.dtype == bool:
+                self.full_vol = arr
+            else:
+                self.full_vol = arr > (127 if arr.max() > 1.0 else 0.5)
+            self.D, self.H, self.W = self.full_vol.shape
+            self.current_source_info = {
+                'name': os.path.basename(file_path_clean),
+                'type': 'raw_microscopy',
+                'path': file_path_clean,
+                'has_skeleton': False
+            }
+
+        print(f"Successfully opened {self.current_source_info['type']}: {file_path_clean} shape=({self.D}, {self.H}, {self.W})", flush=True)
+
+        if z is not None and y is not None and x is not None:
+            return self.extract_patch_at(z, y, x)
+        else:
+            return self.extract_random_patch()
+
+    def extract_fibers_from_instance_patch(self, patch_inst, patch_skel=None, max_fibers=None, min_voxels=8):
+        """
+        Extracts 3D fiber centerlines, endpoints, and waypoints from a segmented 96³ patch.
+        Maps them into interactive Curation Engine seeds ready for wiring inspection & fixing.
+        Extracts all valid fibers in the subvolume without artificial capping.
+        """
+        S = self.cube_size
+        unique_fids = [int(fid) for fid in np.unique(patch_inst) if fid > 0]
+        if not unique_fids:
+            return [], {}
+
+        # Sort fibers by voxel volume (most prominent first)
+        fid_sizes = [(fid, int((patch_inst == fid).sum())) for fid in unique_fids if (patch_inst == fid).sum() >= min_voxels]
+        fid_sizes.sort(key=lambda x: x[1], reverse=True)
+        if max_fibers is not None:
+            fid_sizes = fid_sizes[:max_fibers]
+
+        def get_face_coords(pt):
+            z, y, x = pt
+            # Check proximity to 6 boundary faces (tolerance 1 vx)
+            if z <= 1: return 'z_min', float(y) / (S - 1), float(x) / (S - 1)
+            if z >= S - 2: return 'z_max', float(y) / (S - 1), float(x) / (S - 1)
+            if y <= 1: return 'y_min', float(z) / (S - 1), float(x) / (S - 1)
+            if y >= S - 2: return 'y_max', float(z) / (S - 1), float(x) / (S - 1)
+            if x <= 1: return 'x_min', float(z) / (S - 1), float(y) / (S - 1)
+            if x >= S - 2: return 'x_max', float(z) / (S - 1), float(y) / (S - 1)
+            return 'internal', 0.5, 0.5
+
+        extracted_seeds = []
+        curves_3d = {}
+
+        for rank, (fid, size) in enumerate(fid_sizes, start=1):
+            mask = (patch_inst == fid)
+            if patch_skel is not None:
+                sk = (patch_skel == fid)
+                if sk.sum() == 0:
+                    sk = skeletonize(mask)
+            else:
+                sk = skeletonize(mask)
+
+            pts = np.argwhere(sk)
+            if len(pts) < 3:
+                sk = skeletonize(mask)
+                pts = np.argwhere(sk)
+                if len(pts) < 3:
+                    continue
+
+            # Order points from one end of the fiber to the other
+            centroid = pts.mean(axis=0)
+            start_idx = np.argmax(np.linalg.norm(pts - centroid, axis=1))
+
+            visited = [start_idx]
+            curr = start_idx
+            unvisited = set(range(len(pts))) - {start_idx}
+            ordered = [pts[start_idx]]
+            while unvisited:
+                sub = list(unvisited)
+                dists = np.linalg.norm(pts[sub] - pts[curr], axis=1)
+                nearest = np.argmin(dists)
+                if dists[nearest] > 4.5:
+                    break
+                curr = sub[nearest]
+                visited.append(curr)
+                unvisited.remove(curr)
+                ordered.append(pts[curr])
+
+            if len(ordered) < 2:
+                continue
+
+            curve = np.array(ordered, dtype=np.float32)
+            curves_3d[rank] = curve.tolist()
+
+            p_start = [int(c) for c in curve[0]]
+            p_end = [int(c) for c in curve[-1]]
+
+            face_s, u_s, v_s = get_face_coords(p_start)
+            face_e, u_e, v_e = get_face_coords(p_end)
+
+            # Start seed
+            extracted_seeds.append({
+                'fiber_id': rank,
+                'face': face_s,
+                'u': u_s,
+                'v': v_s,
+                'pos3d': p_start,
+                'is_waypoint': False
+            })
+
+            # Intermediate waypoints to preserve curved paths
+            if len(curve) >= 45:
+                w1 = [int(c) for c in curve[len(curve)//3]]
+                w2 = [int(c) for c in curve[2*len(curve)//3]]
+                extracted_seeds.append({
+                    'fiber_id': rank,
+                    'face': 'internal',
+                    'u': 0.5,
+                    'v': 0.5,
+                    'pos3d': w1,
+                    'is_waypoint': True
+                })
+                extracted_seeds.append({
+                    'fiber_id': rank,
+                    'face': 'internal',
+                    'u': 0.5,
+                    'v': 0.5,
+                    'pos3d': w2,
+                    'is_waypoint': True
+                })
+            elif len(curve) >= 18:
+                w_mid = [int(c) for c in curve[len(curve)//2]]
+                extracted_seeds.append({
+                    'fiber_id': rank,
+                    'face': 'internal',
+                    'u': 0.5,
+                    'v': 0.5,
+                    'pos3d': w_mid,
+                    'is_waypoint': True
+                })
+
+            # End seed
+            extracted_seeds.append({
+                'fiber_id': rank,
+                'face': face_e,
+                'u': u_e,
+                'v': v_e,
+                'pos3d': p_end,
+                'is_waypoint': False
+            })
+
+        return extracted_seeds, curves_3d
+
+    def extract_random_patch(self, min_density=0.03, max_density=0.35, max_attempts=50):
         """Extracts a random 96x96x96 subvolume with valid fiber material."""
         S = self.cube_size
         for attempt in range(max_attempts):
@@ -69,27 +303,107 @@ class RealDataCurationEngine:
             patch = self.full_vol[z:z+S, y:y+S, x:x+S]
             density = float(np.mean(patch))
             if min_density <= density <= max_density:
-                return self.set_current_patch(z, y, x)
+                return self.extract_patch_at(z, y, x)
 
         # Fallback
         z = max(0, (self.D - S) // 2)
         y = max(0, (self.H - S) // 2)
         x = max(0, (self.W - S) // 2)
-        return self.set_current_patch(z, y, x)
+        return self.extract_patch_at(z, y, x)
 
     def extract_patch_at(self, z, y, x):
         """
         Extracts a 96x96x96 subvolume at manually specified (z, y, x) origin coordinates.
-        Coordinates are clamped to valid ranges [0, max_valid_dim].
+        If a segmented instance volume is loaded, automatically pre-extracts fiber centerlines & seeds!
         """
         self.current_loaded_index = None
-        return self.set_current_patch(int(z), int(y), int(x))
+        patch_info = self.set_current_patch(int(z), int(y), int(x))
+
+        if self.full_instance_vol is not None:
+            S = self.cube_size
+            oz, oy, ox = self.current_patch_origin
+            patch_inst = self.full_instance_vol[oz:oz+S, oy:oy+S, ox:ox+S]
+            patch_skel = self.full_instance_skel[oz:oz+S, oy:oy+S, ox:ox+S] if self.full_instance_skel is not None else None
+
+            extracted_seeds, initial_curves = self.extract_fibers_from_instance_patch(patch_inst, patch_skel=patch_skel)
+
+            if extracted_seeds:
+                res = self.resolve_connections(extracted_seeds)
+                patch_info['loaded_seeds'] = extracted_seeds
+                patch_info['curves_3d'] = res['curves_3d']
+                patch_info['num_fibers'] = res['num_fibers']
+                patch_info['is_segmented_source'] = True
+            else:
+                patch_info['loaded_seeds'] = []
+                patch_info['curves_3d'] = {}
+                patch_info['num_fibers'] = 0
+                patch_info['is_segmented_source'] = True
+        else:
+            patch_info['is_segmented_source'] = False
+
+        patch_info['source_info'] = getattr(self, 'current_source_info', {
+            'name': os.path.basename(self.raw_volume_path) if self.raw_volume_path else 'None',
+            'type': 'raw_microscopy',
+            'path': self.raw_volume_path or ''
+        })
+        return patch_info
+
+    def list_available_files(self):
+        """
+        Scans workspace for available 3D TIFF and NPY volumes.
+        Categorizes them into Segmented Instance volumes and Raw Microscopy volumes.
+        """
+        import glob
+        segmented_files = []
+        raw_files = []
+
+        candidate_dirs = ['outputs', 'process_data', 'raw_data', 'augmented_data', 'real_train_data', 'test_data', 'val_data']
+        for cdir in candidate_dirs:
+            if not os.path.exists(cdir): continue
+            for ext in ('*.tif', '*.tiff', '*.npy'):
+                for fpath in glob.glob(os.path.join(cdir, '**', ext), recursive=True):
+                    fpath_clean = fpath.replace('\\', '/')
+                    lower = fpath_clean.lower()
+                    if 'skeleton' in lower or 'meta' in lower or 'centerline' in lower or 'intensity' in lower or 'ori' in lower:
+                        continue
+                    try:
+                        sz_mb = round(os.path.getsize(fpath_clean) / (1024 * 1024), 1)
+                    except:
+                        sz_mb = 0
+
+                    item = {
+                        'path': fpath_clean,
+                        'name': os.path.basename(fpath_clean),
+                        'dir': os.path.dirname(fpath_clean),
+                        'size_mb': sz_mb
+                    }
+
+                    if 'instance' in lower or 'seg' in lower or 'resolved' in lower:
+                        segmented_files.append(item)
+                    else:
+                        raw_files.append(item)
+
+        return {
+            'segmented': segmented_files,
+            'raw': raw_files,
+            'current': getattr(self, 'current_source_info', {
+                'name': os.path.basename(self.raw_volume_path) if self.raw_volume_path else 'None',
+                'type': 'raw_microscopy',
+                'path': self.raw_volume_path or ''
+            })
+        }
 
     def get_volume_info(self):
         """Returns volume spatial shape and maximal origin bounds for UI/API clients."""
         S = self.cube_size
         return {
             'raw_volume_path': self.raw_volume_path,
+            'instance_volume_path': self.instance_volume_path,
+            'source_info': getattr(self, 'current_source_info', {
+                'name': os.path.basename(self.raw_volume_path) if self.raw_volume_path else 'None',
+                'type': 'raw_microscopy',
+                'path': self.raw_volume_path or ''
+            }),
             'shape': [int(self.D), int(self.H), int(self.W)],
             'cube_size': int(S),
             'max_origin': [int(max(0, self.D - S)), int(max(0, self.H - S)), int(max(0, self.W - S))],
@@ -143,8 +457,8 @@ class RealDataCurationEngine:
         sub_surf = np.zeros_like(surf, dtype=bool)
         sub_surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
         vox_coords = np.argwhere(sub_surf)
-        if len(vox_coords) > 6000:
-            sub_idx = np.random.choice(len(vox_coords), size=6000, replace=False)
+        if len(vox_coords) > 24000:
+            sub_idx = np.random.choice(len(vox_coords), size=24000, replace=False)
             vox_coords = vox_coords[sub_idx]
         point_cloud = vox_coords.tolist()
 
@@ -716,8 +1030,8 @@ class RealDataCurationEngine:
         from scipy.ndimage import binary_erosion
         surf = self.current_patch_bin & ~binary_erosion(self.current_patch_bin)
         vox_coords = np.argwhere(surf)
-        if len(vox_coords) > 7000:
-            sub_idx = np.random.choice(len(vox_coords), size=7000, replace=False)
+        if len(vox_coords) > 24000:
+            sub_idx = np.random.choice(len(vox_coords), size=24000, replace=False)
             vox_coords = vox_coords[sub_idx]
         point_cloud = vox_coords.tolist()
 

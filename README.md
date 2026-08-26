@@ -184,12 +184,12 @@ Stages 2–7: H-Severing, Fragment Graph, Topology Matching, Voronoi Diffusion o
 
 ## 🛠️ Interactive 3D Curation Web App & Engine
 
-A WebGL-powered 3D annotation and geodesic solving suite located in `curation_tool/`:
-- **3D WebGL Bounding Box & Orbit Controls** (Three.js).
+A high-performance WebGL-powered 3D annotation and geodesic solving suite located in `curation_tool/`:
+- **🖥️ Direct PC File Picker & Segmented Instance TIFF Loader**: Open any raw volume (`.tif`, `.npy`) or segmented instance output (`outputs/topology_resolved_morpho/instance_volume.tif`) directly using your native Windows File Explorer dialog or browser file selector.
+- **⚡ Uncapped 3D Skeletonization & Centerline Extraction**: Automatically runs 3D skeletonization across all segmented fiber labels in the 96³ patch (resolving 40+ continuous fibers with $\ge 8\text{ voxels}$), extracts boundary/internal endpoints and intermediate waypoints, and pre-populates interactive fiber seeds.
+- **🛠️ Interactive Wiring Correction & Geodesic Lane Solver**: Inspect predicted fiber paths in 3D WebGL (Three.js), easily fix false mergers, disconnect bad bridges, move waypoints, add missing seeds, and re-solve continuous geodesic paths (`Space`).
 - **Always-Active Visual Crop ROI**: Real-time volume slicing with 1-voxel slider & mouse-wheel precision (`step=1`) without distracting wireframe borders.
-- **Automated Geodesic Lane-Guided Routing** across 6 faces of the subvolume with sub-voxel auto-centering.
-- **2D Slice Paintbrush & Label Editor** (XY, XZ, YZ, MIP views).
-- **Multi-Target Supervised Patch Export** (`.vol`, `.centerline`, `.instance`, `.intensity`, `.ori`).
+- **💾 1-Click Ground Truth Patch Export**: Press `Enter` to export curated 96³ samples (`.vol`, `.instance`, `.centerline`, `.intensity`, `.ori`, `_meta.json`) directly into `real_train_data/curated_patches/` for retraining specialist models.
 
 ---
 
@@ -261,13 +261,20 @@ python prepare_datasets.py
 
 ---
 
-### 2. Interactive 3D Curation Web App
-Start the WebGL Three.js annotation server to inspect volumes, define seed waypoints, and curate real microscopy training blocks:
+### 2. Interactive 3D Fiber Curator Web App
+Start the WebGL Three.js annotation server to inspect volumes, load segmented instances, fix wiring, and curate real training samples:
 
 ```bash
 python curation_tool/app.py
 ```
-Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser.
+Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser:
+1. Click **`📁 Upload Volume`** in the top navbar to select any `.tif`, `.tiff`, or `.npy` file from your PC (or simply drag-and-drop the file directly onto the browser window, or click **`📂 Presets`**).
+2. Select any segmented TIFF (e.g. `outputs/topology_resolved_morpho/instance_volume.tif`) or raw microscopy volume.
+3. The engine automatically runs 3D skeletonization across all segmented fibers in the 96³ cube, extracts endpoints & waypoints, and renders all 40+ 3D fiber tracks.
+4. **Orient with 3D Coordinate Arrows**: Use the 3D scene coordinate arrows anchored directly next to the cube origin (Red: +X width, Green: +Y height, Cyan: +Z depth) that orbit with natural 3D depth and perspective.
+5. **Fix wiring**: Select a fiber ID, adjust or add/delete waypoints, split false mergers, or reconnect broken fibers.
+6. Press **`Space`** to re-resolve geodesic continuous paths and inspect updated 3D centerlines.
+7. Press **`Enter`** to save the curated 96³ patch directly into `real_train_data/curated_patches/`.
 
 ---
 

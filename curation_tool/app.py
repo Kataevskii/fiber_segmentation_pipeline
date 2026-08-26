@@ -8,19 +8,20 @@ from curation_tool.engine import RealDataCurationEngine
 
 app = Flask(__name__)
 
+_default_raw = 'process_data/COLLAGENCROP_003_0000.tif' if os.path.exists('process_data/COLLAGENCROP_003_0000.tif') else 'process_data/CROP_003_0000.tif'
 engine = RealDataCurationEngine(
-    raw_volume_path='process_data/CROP_003_0000.tif',
+    raw_volume_path=_default_raw,
     curated_output_dir='real_train_data/curated_patches',
     cube_size=96
 )
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real Collagen 96³ 3D Box Annotator & Geodesic Resolver</title>
+    <title>Fiber Curator - 3D Box Annotator & Geodesic Resolver</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -68,175 +69,318 @@ HTML_TEMPLATE = """
         header {
             background: var(--bg-surface);
             border-bottom: 1px solid var(--border-subtle);
-            padding: 10px 18px;
+            padding: 6px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
             z-index: 10;
+            flex-shrink: 0;
+            min-height: 46px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
             flex-shrink: 0;
         }
 
-        .logo-group {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
         .app-title {
-            font-size: 14px;
-            font-weight: 700;
-            letter-spacing: -0.3px;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: -0.2px;
             color: var(--text-primary);
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
+            white-space: nowrap;
         }
 
         .app-title span {
             color: var(--accent-cyan);
             font-family: 'JetBrains Mono', monospace;
             background: rgba(0, 229, 255, 0.12);
-            padding: 2px 6px;
+            padding: 1px 5px;
             border-radius: 4px;
-            font-size: 11px;
+            font-size: 10px;
         }
 
-        .meta-badges {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .badge {
-            background: var(--bg-surface-raised);
-            border: 1px solid var(--border-subtle);
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-
-        .badge strong {
-            color: var(--text-primary);
-        }
-
-        .badge.highlight {
-            border-color: rgba(0, 230, 118, 0.4);
-            background: rgba(0, 230, 118, 0.08);
-            color: var(--accent-lime);
-        }
-
-        .coord-selector-capsule {
-            display: flex;
+        .btn-header-upload {
+            background: linear-gradient(135deg, rgba(0, 229, 255, 0.20) 0%, rgba(0, 230, 118, 0.15) 100%);
+            border: 1px solid var(--accent-cyan);
+            color: #ffffff;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-size: 11.5px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
             align-items: center;
             gap: 5px;
-            background: var(--bg-surface-raised);
-            border: 1px solid var(--border-subtle);
-            padding: 3px 8px;
-            border-radius: 6px;
-            flex-shrink: 0;
-        }
-
-        .coord-selector-title {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-            font-family: 'JetBrains Mono', monospace;
+            transition: all 0.15s ease;
             white-space: nowrap;
         }
 
-        .coord-field-group {
-            display: flex;
+        .btn-header-upload:hover {
+            background: var(--accent-cyan);
+            color: #051016;
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
+        }
+
+        .btn-header-presets {
+            background: var(--bg-surface-raised);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
             align-items: center;
+            gap: 4px;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-header-presets:hover {
+            border-color: var(--border-medium);
+            color: var(--text-primary);
+        }
+
+        .source-pill {
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            padding: 2px 4px;
-            gap: 2px;
-        }
-
-        .coord-field-label {
+            padding: 3px 8px;
+            border-radius: 5px;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 10px;
-            font-weight: 800;
-            color: var(--text-secondary);
+            font-size: 10.5px;
+            color: var(--accent-lime);
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: border-color 0.15s ease;
         }
 
-        .coord-field-input {
-            width: 42px;
-            background: transparent;
-            border: none;
+        .source-pill:hover {
+            border-color: var(--accent-cyan);
+        }
+
+        /* Center Group: Origin Capsule */
+        .header-center {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .coord-capsule {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            background: var(--bg-surface-raised);
+            border: 1px solid var(--border-subtle);
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .coord-title {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            margin-right: 2px;
+        }
+
+        .c-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9.5px;
+            font-weight: 800;
+            color: var(--accent-cyan);
+            margin-left: 3px;
+        }
+
+        .c-input {
+            width: 38px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 3px;
             color: var(--text-primary);
             font-family: 'JetBrains Mono', monospace;
             font-size: 11px;
             font-weight: 700;
             text-align: center;
+            padding: 2px 0;
             outline: none;
             -moz-appearance: textfield;
         }
 
-        .coord-field-input::-webkit-outer-spin-button,
-        .coord-field-input::-webkit-inner-spin-button {
+        .c-input::-webkit-outer-spin-button,
+        .c-input::-webkit-inner-spin-button {
             -webkit-appearance: none;
             margin: 0;
         }
 
-        .coord-field-input:focus {
+        .c-input:focus {
+            border-color: var(--accent-cyan);
             color: var(--accent-cyan);
         }
 
-        .btn-load-coords {
+        .btn-go-coords {
             background: rgba(0, 229, 255, 0.15);
             border: 1px solid var(--accent-cyan);
             color: var(--accent-cyan);
-            padding: 3px 8px;
+            padding: 2px 7px;
             border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
+            font-size: 10.5px;
+            font-weight: 800;
             cursor: pointer;
-            white-space: nowrap;
+            margin-left: 4px;
             transition: all 0.15s ease;
         }
 
-        .btn-load-coords:hover {
+        .btn-go-coords:hover {
             background: var(--accent-cyan);
             color: #051016;
-            box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
         }
 
-        .nudge-group {
-            display: flex;
-            gap: 2px;
-            align-items: center;
-            border-left: 1px solid var(--border-subtle);
-            padding-left: 5px;
-            margin-left: 2px;
-        }
-
-        .btn-nudge {
-            background: var(--bg-card);
+        .btn-header-icon {
+            background: var(--bg-surface-raised);
             border: 1px solid var(--border-subtle);
             color: var(--text-secondary);
-            padding: 2px 4px;
-            border-radius: 3px;
-            font-size: 9px;
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 600;
             cursor: pointer;
-            transition: all 0.1s ease;
+            transition: all 0.15s ease;
+            white-space: nowrap;
         }
 
-        .btn-nudge:hover {
+        .btn-header-icon:hover {
             border-color: var(--accent-cyan);
-            color: var(--accent-cyan);
-            background: var(--bg-surface);
+            color: var(--text-primary);
         }
 
-        .header-actions {
+        .btn-header-icon.danger:hover {
+            border-color: var(--accent-magenta);
+            color: var(--accent-magenta);
+            background: rgba(245, 0, 87, 0.1);
+        }
+
+        /* Right Group */
+        .header-right {
             display: flex;
-            gap: 8px;
             align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .dropdown-select-compact {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            padding: 4px 6px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-family: inherit;
+            cursor: pointer;
+            outline: none;
+            max-width: 140px;
+        }
+
+        .dropdown-select-compact:hover {
+            border-color: var(--accent-cyan);
+        }
+
+        .btn-action-resolve {
+            background: var(--accent-cyan);
+            color: #051016;
+            border: 1px solid var(--accent-cyan);
+            font-size: 11.5px;
+            font-weight: 700;
+            padding: 4px 11px;
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-action-resolve:hover {
+            background: #40e9ff;
+            box-shadow: 0 0 14px rgba(0, 229, 255, 0.6);
+        }
+
+        .btn-action-save {
+            background: var(--accent-lime);
+            color: #051016;
+            border: 1px solid var(--accent-lime);
+            font-size: 11.5px;
+            font-weight: 700;
+            padding: 4px 11px;
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(0, 230, 118, 0.3);
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-action-save:hover {
+            background: #40ff99;
+            box-shadow: 0 0 14px rgba(0, 230, 118, 0.6);
+        }
+
+        .curated-badge-compact {
+            background: rgba(0, 230, 118, 0.10);
+            border: 1px solid rgba(0, 230, 118, 0.3);
+            color: var(--accent-lime);
+            padding: 3px 7px;
+            border-radius: 5px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+
+
+        /* 3D Point Density Slider */
+        .slider-toggle-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .slider-label {
+            font-weight: 700;
+            color: var(--accent-cyan);
+            white-space: nowrap;
+        }
+
+        .density-range-input {
+            width: 75px;
+            height: 4px;
+            accent-color: var(--accent-cyan);
+            cursor: pointer;
+        }
+
+        .slider-val-tag {
+            font-size: 10px;
+            font-weight: 800;
+            color: var(--text-primary);
+            min-width: 28px;
+            text-align: right;
         }
 
         button {
@@ -636,75 +780,6 @@ HTML_TEMPLATE = """
             color: var(--accent-magenta);
         }
 
-        /* 3D Waypoint / Midpoint Tool Card */
-        .waypoint-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-accent);
-            border-radius: 8px;
-            padding: 10px 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .waypoint-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr) 1.5fr;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .coord-input-group {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            background: var(--bg-surface-raised);
-            border: 1px solid var(--border-subtle);
-            border-radius: 5px;
-            padding: 4px 6px;
-        }
-
-        .coord-label {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-        }
-
-        .coord-num-input {
-            width: 36px;
-            background: transparent;
-            border: none;
-            color: var(--text-primary);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            font-weight: 600;
-            text-align: center;
-            outline: none;
-        }
-
-        .btn-insert-waypoint {
-            background: linear-gradient(135deg, #00e5ff 0%, #00b0ff 100%);
-            color: #051016;
-            border: none;
-            border-radius: 5px;
-            padding: 5px 10px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-            transition: all 0.15s ease;
-            white-space: nowrap;
-        }
-
-        .btn-insert-waypoint:hover {
-            filter: brightness(1.15);
-            transform: translateY(-1px);
-        }
 
         .chip-wp-tag {
             background: rgba(0, 229, 255, 0.15);
@@ -879,66 +954,419 @@ HTML_TEMPLATE = """
             border-radius: 3px;
             color: var(--text-secondary);
         }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(4, 6, 12, 0.85);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-accent);
+            border-radius: 12px;
+            width: 660px;
+            max-width: 92vw;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 30px rgba(0, 229, 255, 0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: modalFadeIn 0.2s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            padding: 14px 20px;
+            background: var(--bg-surface-raised);
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modal-close-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+        }
+
+        .modal-close-btn:hover {
+            color: var(--accent-magenta);
+            background: rgba(245, 0, 87, 0.1);
+        }
+
+        .modal-body {
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            max-height: 72vh;
+            overflow-y: auto;
+        }
+
+        .modal-section {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .modal-label {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .modal-hint {
+            font-size: 10.5px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .modal-text-input {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            outline: none;
+            width: 100%;
+            transition: border-color 0.15s ease;
+        }
+
+        .modal-text-input:focus {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.25);
+        }
+
+        .preset-pills-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            max-height: 190px;
+            overflow-y: auto;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            padding: 8px;
+        }
+
+        .preset-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: var(--bg-surface-raised);
+            border: 1px solid var(--border-subtle);
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.12s ease;
+        }
+
+        .preset-item:hover {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 229, 255, 0.08);
+            transform: translateX(2px);
+        }
+
+        .preset-item-name {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .preset-tag {
+            font-size: 9.5px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+            flex-shrink: 0;
+            margin-left: 8px;
+        }
+
+        .preset-tag.segmented {
+            background: rgba(0, 230, 118, 0.15);
+            color: var(--accent-lime);
+            border: 1px solid rgba(0, 230, 118, 0.3);
+        }
+
+        .preset-tag.raw {
+            background: rgba(0, 229, 255, 0.15);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(0, 229, 255, 0.3);
+        }
+
+        .modal-coord-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .modal-coord-inputs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .modal-footer {
+            padding: 12px 20px;
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-surface-raised);
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .btn-open-file {
+            background: rgba(0, 229, 255, 0.15);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 11.5px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-open-file:hover {
+            background: var(--accent-cyan);
+            color: #051016;
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.4);
+        }
+
+        .btn-open-file.highlight-btn {
+            background: linear-gradient(135deg, rgba(0, 229, 255, 0.25) 0%, rgba(0, 230, 118, 0.20) 100%);
+            border-color: var(--accent-cyan);
+            color: #ffffff;
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.25);
+        }
+
+        .btn-open-file.highlight-btn:hover {
+            background: var(--accent-cyan);
+            color: #051016;
+            box-shadow: 0 0 16px rgba(0, 229, 255, 0.6);
+        }
+
+        /* PC Picker Card */
+        .pc-picker-card {
+            background: linear-gradient(135deg, rgba(0, 229, 255, 0.10) 0%, rgba(0, 230, 118, 0.08) 100%);
+            border: 1.5px dashed var(--accent-cyan);
+            border-radius: 8px;
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .pc-picker-card:hover {
+            background: linear-gradient(135deg, rgba(0, 229, 255, 0.16) 0%, rgba(0, 230, 118, 0.12) 100%);
+            border-color: #40e9ff;
+        }
+
+        .btn-pc-browse {
+            background: var(--accent-cyan);
+            color: #051016;
+            border: 1px solid var(--accent-cyan);
+            font-size: 12px;
+            font-weight: 700;
+            padding: 7px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+        }
+
+        .btn-pc-browse:hover {
+            background: #40e9ff;
+            box-shadow: 0 0 16px rgba(0, 229, 255, 0.6);
+            transform: translateY(-1px);
+        }
+
+        .btn-pc-browse.secondary {
+            background: var(--bg-surface-raised);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            box-shadow: none;
+        }
+
+        .btn-pc-browse.secondary:hover {
+            border-color: var(--accent-lime);
+            color: var(--accent-lime);
+            background: rgba(0, 230, 118, 0.12);
+        }
     </style>
 </head>
 <body>
 
-    <!-- Header -->
+    <!-- Open File Modal -->
+    <div id="file-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title">📂 Open 3D Volume or Segmented Instance TIFF</div>
+                <button class="modal-close-btn" onclick="closeFileModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <!-- Upload Volume Card -->
+                <div class="pc-picker-card">
+                    <div style="font-size: 13px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                        <span>📁 Upload Volume File</span>
+                    </div>
+                    <div style="font-size: 11px; color: var(--text-secondary); line-height: 1.4;">
+                        Select or drag-and-drop any raw volume or segmented instance TIFF (.tif, .tiff, .npy) from your PC.
+                    </div>
+                    <div style="margin-top: 4px;">
+                        <label class="btn-pc-browse" style="cursor: pointer;">
+                            📁 Choose File from PC...
+                            <input type="file" id="modal-browser-file-input" accept=".tif,.tiff,.npy" style="display: none;" onchange="handleBrowserFileSelect(this)">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">🎯 Or Specify File Path (.tif, .tiff, .npy):</label>
+                    <input type="text" id="modal-file-path" class="modal-text-input" placeholder="e.g. outputs/topology_resolved_morpho/instance_volume.tif" value="outputs/topology_resolved_morpho/instance_volume.tif">
+                    <div class="modal-hint">Opening a segmented instance volume automatically skeletonizes labels and extracts interactive fiber centerlines & wiring.</div>
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">⭐ Quick Presets / Detected Volumes:</label>
+                    <div class="preset-pills-grid" id="modal-preset-pills">
+                        <div style="color: var(--text-muted); font-size: 11px; padding: 4px;">Loading available workspace files...</div>
+                    </div>
+                </div>
+
+                <div class="modal-section" id="modal-raw-pairing-section">
+                    <label class="modal-label">🔬 Optional Raw Volume (for intensity/density):</label>
+                    <input type="text" id="modal-raw-path" class="modal-text-input" placeholder="e.g. process_data/COLLAGENCROP_003_0000.tif (optional)">
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">📍 Initial Patch Location:</label>
+                    <div class="modal-coord-row">
+                        <label class="toggle-pill">
+                            <input type="radio" name="modal-extract-mode" id="modal-mode-random" value="random" checked onchange="toggleModalCoordMode()">
+                            <span>🎲 Random High-Density Patch</span>
+                        </label>
+                        <label class="toggle-pill">
+                            <input type="radio" name="modal-extract-mode" id="modal-mode-manual" value="manual" onchange="toggleModalCoordMode()">
+                            <span>📍 Manual Origin (Z, Y, X)</span>
+                        </label>
+                    </div>
+                    <div class="modal-coord-inputs" id="modal-manual-coords" style="display: none; margin-top: 6px;">
+                        <span>Z:</span> <input type="number" id="modal-z" class="crop-num-input" value="100" style="width: 55px;">
+                        <span>Y:</span> <input type="number" id="modal-y" class="crop-num-input" value="100" style="width: 55px;">
+                        <span>X:</span> <input type="number" id="modal-x" class="crop-num-input" value="100" style="width: 55px;">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeFileModal()">Cancel</button>
+                <button class="btn-resolve" onclick="submitOpenFile()" id="btn-modal-open">🚀 Open & Inspect Patch</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header (Clean, Decluttered Layout) -->
     <header>
-        <div class="logo-group">
-            <div class="app-title">
-                COLLAGEN GT CURATOR <span>96³ 3D BOX RESOLVER</span>
-            </div>
-            <div class="meta-badges">
-                <div class="badge" id="origin-badge">Origin: <strong>(Z=0, Y=0, X=0)</strong></div>
-                <div class="badge" id="density-badge">Density: <strong>10.2%</strong></div>
-                <div class="badge highlight" id="total-badge">💾 Curated: <strong id="curated-count">0</strong></div>
-            </div>
-        </div>
+        <!-- Left: Brand + Direct Upload + Presets + Source Badge -->
+        <div class="header-left">
+            <div class="app-title">FIBER <span>CURATOR</span></div>
+            
+            <label class="btn-header-upload" title="Upload any .tif, .tiff, or .npy volume from your PC">
+                📁 Upload Volume
+                <input type="file" id="browser-file-input" accept=".tif,.tiff,.npy" style="display:none;" onchange="handleBrowserFileSelect(this)">
+            </label>
 
-        <!-- Manual Coordinate Selector -->
-        <div class="coord-selector-capsule" title="Manually select raw volume coordinates (Z, Y, X) to extract 96³ cube">
-            <span class="coord-selector-title">📍 Origin:</span>
-            <div class="coord-field-group" title="Z coordinate (depth). Scroll or type">
-                <span class="coord-field-label">Z:</span>
-                <input type="number" id="load-coord-z" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-z', 16)">
-            </div>
-            <div class="coord-field-group" title="Y coordinate (height). Scroll or type">
-                <span class="coord-field-label">Y:</span>
-                <input type="number" id="load-coord-y" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-y', 16)">
-            </div>
-            <div class="coord-field-group" title="X coordinate (width). Scroll or type">
-                <span class="coord-field-label">X:</span>
-                <input type="number" id="load-coord-x" class="coord-field-input global-coord-input" min="0" max="404" value="0" step="16" onkeydown="handleCoordKey(event)" onwheel="handleCoordWheel(event, 'load-coord-x', 16)">
-            </div>
-            <button class="btn-load-coords" onclick="loadManualCoordinates()" title="Extract 96³ cube at manual coordinates [Enter]">
-                Load Coords ↵
+            <button class="btn-header-presets" onclick="openFileModal()" title="Browse workspace presets or type custom path">
+                📂 Presets
             </button>
-            <div class="nudge-group" title="Step subvolume along axes by 32 vx">
-                <button class="btn-nudge" onclick="nudgeCoords(0, 0, -32)" title="Step X -32">◀X</button>
-                <button class="btn-nudge" onclick="nudgeCoords(0, 0, 32)" title="Step X +32">X▶</button>
-                <button class="btn-nudge" onclick="nudgeCoords(0, -32, 0)" title="Step Y -32">▲Y</button>
-                <button class="btn-nudge" onclick="nudgeCoords(0, 32, 0)" title="Step Y +32">Y▼</button>
-                <button class="btn-nudge" onclick="nudgeCoords(-32, 0, 0)" title="Step Z -32">◀Z</button>
-                <button class="btn-nudge" onclick="nudgeCoords(32, 0, 0)" title="Step Z +32">Z▶</button>
+
+            <div class="source-pill" id="source-pill" onclick="openFileModal()" title="Active Volume (Click to change)">
+                <span id="source-name">COLLAGENCROP_003_0000.tif</span>
             </div>
         </div>
 
-        <div class="header-actions">
-            <select id="saved-patches-select" class="dropdown-select" onchange="loadSavedPatch(this.value)" title="Load an already-saved cube to inspect or adjust annotations">
-                <option value="">📂 Load Saved Cube...</option>
+        <!-- Center: Coordinate Origin Input + Random Button -->
+        <div class="header-center">
+            <div class="coord-capsule" title="Type (Z, Y, X) origin coordinates and press Enter or click Go">
+                <span class="coord-title">Origin:</span>
+                <span class="c-tag">Z</span><input type="number" id="load-coord-z" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
+                <span class="c-tag">Y</span><input type="number" id="load-coord-y" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
+                <span class="c-tag">X</span><input type="number" id="load-coord-x" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
+                <button class="btn-go-coords" onclick="loadManualCoordinates()" title="Jump to coordinates [Enter]">Go ↵</button>
+            </div>
+
+            <button class="btn-header-icon" onclick="fetchNewRandomPatch()" title="Load Random Cube [R]">
+                🎲 Random [R]
+            </button>
+        </div>
+
+        <!-- Right: Saved Cubes + Primary Action Buttons -->
+        <div class="header-right">
+            <select id="saved-patches-select" class="dropdown-select-compact" onchange="loadSavedPatch(this.value)" title="Load an already-saved patch">
+                <option value="">📂 Saved (0)...</option>
             </select>
-            <button class="btn-secondary" onclick="fetchNewRandomPatch()" title="Hotkey: R">
-                🎲 Random Cube [R]
+
+            <button class="btn-action-resolve" onclick="resolveConnections()" title="Re-solve continuous geodesic paths [Space]">
+                ⚡ Resolve [Space]
             </button>
-            <button class="btn-secondary" onclick="clearAllSeeds()" title="Clear all seeds">
-                🗑️ Clear
-            </button>
-            <button class="btn-resolve" onclick="resolveConnections()" title="Hotkey: Space">
-                ⚡ Resolve Paths [Space]
-            </button>
-            <button class="btn-save" onclick="saveAndNext()" title="Hotkey: Enter">
+
+            <button class="btn-action-save" onclick="saveAndNext()" title="Save Ground Truth patch & load next [Enter]">
                 ✅ Save & Next [Enter]
+            </button>
+
+            <div class="curated-badge-compact" id="total-badge" title="Total Curated Patches">
+                💾 <strong id="curated-count">0</strong>
+            </div>
+
+            <button class="btn-header-icon danger" onclick="clearAllSeeds()" title="Clear all seeds in current patch">
+                🗑️
             </button>
         </div>
     </header>
@@ -948,16 +1376,18 @@ HTML_TEMPLATE = """
         
         <div class="three-stage-panel">
             <div class="stage-header">
-                <!-- Viewport Toggles -->
+                <!-- Viewport Density Slider -->
                 <div class="toggles-cluster">
-                    <label class="toggle-pill" title="Transparent zero-voxels in 3D box">
-                        <input type="checkbox" id="chk-transparent" checked onchange="toggleTransparency(this.checked)">
-                        <span>Transparent 0s</span>
+                    <label class="toggle-pill" title="Show / Hide 3D Coordinate Arrows next to the cube">
+                        <input type="checkbox" id="toggle-axes-arrows" checked onchange="toggleAxesVisibility(this.checked)">
+                        <span>🧭 Axes</span>
                     </label>
-                    <label class="toggle-pill" title="3D collagen point cloud">
-                        <input type="checkbox" id="chk-pointcloud" checked onchange="togglePointCloud(this.checked)">
-                        <span>3D Points</span>
-                    </label>
+
+                    <div class="slider-toggle-pill" title="3D Fiber Point Cloud Density (0% to 100%)">
+                        <span class="slider-label">✨ Points:</span>
+                        <input type="range" id="slider-point-density" class="density-range-input" min="0" max="100" value="40" step="1" oninput="onPointDensityInput(this.value)">
+                        <span class="slider-val-tag" id="val-point-density">40%</span>
+                    </div>
                 </div>
 
                 <!-- Ergonomic Active Fiber Capsule -->
@@ -966,7 +1396,7 @@ HTML_TEMPLATE = """
                     <div class="active-fiber-badge" id="active-id-badge" style="background-color: #00e5ff;">
                         <span>#</span>
                         <input type="number" id="active-id-input" class="active-fiber-input" min="1" max="99" value="1" 
-                               onchange="setActiveId(this.value)" oninput="setActiveId(this.value)" title="Type or scroll Fiber ID">
+                                onchange="setActiveId(this.value)" oninput="setActiveId(this.value)" title="Type or scroll Fiber ID">
                     </div>
                     <button class="fiber-nav-btn" onclick="setActiveId(activeFiberId + 1)" title="Next Fiber ID (] or +)">▶</button>
                     
@@ -999,7 +1429,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Right: Controls, Crop ROI, & 3D Midpoint Tool -->
+        <!-- Right: Controls & Crop ROI -->
         <div class="preview-panel">
             <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
                 <div class="panel-title">Controls & Sub-Box ROI</div>
@@ -1008,11 +1438,8 @@ HTML_TEMPLATE = """
 
             <!-- Visual Sub-Box Crop Tool Card -->
             <div class="crop-card" id="crop-card">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div class="panel-title" style="display: flex; align-items: center; gap: 6px;">
-                        <span>✂️ Visual Sub-Box Crop (ROI)</span>
-                    </div>
-                    <span id="crop-stats-badge" class="badge">Full: 96³ (100%)</span>
+                <div class="panel-title">
+                    <span>✂️ Visual Sub-Box ROI</span>
                 </div>
 
                 <!-- 3-Axis Sliders -->
@@ -1020,30 +1447,30 @@ HTML_TEMPLATE = """
                     <!-- Z Axis (Depth) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">Z:</span>
-                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min (Depth start)">
-                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')" title="Z Min">
-                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max">
-                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')" title="Z Max (Depth end)">
+                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
+                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
+                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
+                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
                         <span id="crop-z-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
                     <!-- Y Axis (Height) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">Y:</span>
-                        <input type="number" id="crop-y-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min (Height start)">
-                        <input type="range" id="crop-y-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')" title="Y Min">
-                        <input type="range" id="crop-y-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max">
-                        <input type="number" id="crop-y-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')" title="Y Max (Height end)">
+                        <input type="number" id="crop-y-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')">
+                        <input type="range" id="crop-y-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('y', 'min', this.value)" onwheel="handleCropWheel(event, 'y', 'min')">
+                        <input type="range" id="crop-y-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')">
+                        <input type="number" id="crop-y-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('y', 'max', this.value)" onwheel="handleCropWheel(event, 'y', 'max')">
                         <span id="crop-y-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
                     <!-- X Axis (Width) -->
                     <div class="crop-row">
                         <span class="crop-axis-label">X:</span>
-                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min (Width start)">
-                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')" title="X Min">
-                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max">
-                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')" title="X Max (Width end)">
+                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
+                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
+                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
+                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
                         <span id="crop-x-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
                 </div>
@@ -1054,43 +1481,8 @@ HTML_TEMPLATE = """
                     <button class="btn-crop-action" onclick="setCropPreset(16, 79, 16, 79, 16, 79)" title="Center 64³ crop">📦 64³</button>
                     <button class="btn-crop-action" onclick="setCropPreset(24, 71, 24, 71, 24, 71)" title="Center 48³ crop">📦 48³</button>
                     <button class="btn-crop-action" onclick="setCropPreset(32, 63, 32, 63, 32, 63)" title="Center 32³ crop">📦 32³</button>
-                    <button class="btn-crop-action" onclick="resetCrop()" title="Restore full 96³ volume view">🔄 Reset 96³</button>
-                    <button class="btn-crop-action" onclick="centerCameraOnCrop()" title="Re-target 3D orbit controls to crop box center">🔍 Center View</button>
-                </div>
-
-                <div style="font-size: 9.5px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; display: flex; justify-content: space-between;">
-                    <span>💾 Purely visual during resolution — saves full 96³ blocks</span>
-                    <span id="crop-dim-text">96 × 96 × 96 vx</span>
-                </div>
-            </div>
-
-            <!-- Direct 3D Midpoint / Waypoint Tool Card -->
-            <div class="waypoint-card">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div class="panel-title" style="display: flex; align-items: center; gap: 6px;">
-                        <span>📍 3D Midpoint Tool</span>
-                        <span class="badge highlight" id="waypoint-target-fiber">Fiber #1</span>
-                    </div>
-                    <span style="font-size: 10px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace;">Internal Guideway</span>
-                </div>
-
-                <div class="waypoint-row">
-                    <div class="coord-input-group" title="Scroll wheel or type to move X in 3D">
-                        <span class="coord-label">X:</span>
-                        <input type="number" id="wp-x" class="coord-num-input" min="0" max="95" value="48" oninput="onWaypointCoordInput()" onwheel="handleCoordWheel(event, 'wp-x')">
-                    </div>
-                    <div class="coord-input-group" title="Scroll wheel or type to move Y in 3D">
-                        <span class="coord-label">Y:</span>
-                        <input type="number" id="wp-y" class="coord-num-input" min="0" max="95" value="48" oninput="onWaypointCoordInput()" onwheel="handleCoordWheel(event, 'wp-y')">
-                    </div>
-                    <div class="coord-input-group" title="Scroll wheel or type to move Z in 3D">
-                        <span class="coord-label">Z:</span>
-                        <input type="number" id="wp-z" class="coord-num-input" min="0" max="95" value="48" oninput="onWaypointCoordInput()" onwheel="handleCoordWheel(event, 'wp-z')">
-                    </div>
-
-                    <button id="btn-wp-toggle" class="btn-insert-waypoint" onclick="toggleWaypoint()" title="Add or remove 3D midpoint for active fiber">
-                        ➕ Add Midpoint
-                    </button>
+                    <button class="btn-crop-action" onclick="resetCrop()" title="Restore full view">🔄 Reset</button>
+                    <button class="btn-crop-action" onclick="centerCameraOnCrop()" title="Center 3D orbit controls on crop box">🔍 Center View</button>
                 </div>
             </div>
 
@@ -1102,7 +1494,7 @@ HTML_TEMPLATE = """
                     <span class="info-value" id="info-origin-val">(0, 0, 0)</span>
                 </div>
                 <div class="info-row">
-                    <span class="info-label">Collageneous Density:</span>
+                    <span class="info-label">Fiber Density:</span>
                     <span class="info-value" id="info-density-val">0.0%</span>
                 </div>
                 <div class="info-row">
@@ -1146,6 +1538,7 @@ HTML_TEMPLATE = """
         let isTransparentMode = true;
         let latestResolvedCurves = {};
         let rawPointCloudFull = [];
+        let currentPointDensity = 40;
 
         // Visual Crop State (Always active)
         let cropState = {
@@ -1163,8 +1556,10 @@ HTML_TEMPLATE = """
         let faceMeshes = [];
         let offscreenCanvases = {};
         let faceTextures = {};
-        let seedPinsGroup, curves3DGroup, pointCloudMesh;
+        let seedPinsGroup, curves3DGroup, pointCloudMesh, axes3DGroup;
         let globalWireMesh = null;
+        let cropWireMesh = null;
+        let isAxesVisible = true;
 
         function initIdSelector() {
             const badge = document.getElementById('active-id-badge');
@@ -1208,8 +1603,6 @@ HTML_TEMPLATE = """
                     strip.appendChild(pill);
                 });
             }
-
-            syncWaypointInputsForActiveFiber();
         }
 
         function setActiveId(id) {
@@ -1227,123 +1620,12 @@ HTML_TEMPLATE = """
             setActiveId(nextId);
         }
 
-        function handleCoordWheel(event, inputId) {
-            event.preventDefault();
-            const input = document.getElementById(inputId);
-            if (!input) return;
-            let val = parseInt(input.value) || 0;
-            val += (event.deltaY < 0 ? 1 : -1);
-            val = Math.max(0, Math.min(95, val));
-            input.value = val;
-            onWaypointCoordInput();
-        }
-
-        function syncWaypointInputsForActiveFiber() {
-            const targetBadge = document.getElementById('waypoint-target-fiber');
-            const btnToggle = document.getElementById('btn-wp-toggle');
-
-            if (targetBadge) {
-                targetBadge.innerText = `Fiber #${activeFiberId}`;
-                targetBadge.style.backgroundColor = COLOR_PALETTE[(activeFiberId - 1) % COLOR_PALETTE.length];
-                targetBadge.style.color = '#051016';
-            }
-
-            const existingWp = seedsList.find(s => s.fiber_id === activeFiberId && (s.is_waypoint || s.face === 'waypoint' || s.face === 'internal'));
-            if (existingWp) {
-                document.getElementById('wp-x').value = existingWp.pos3d[2];
-                document.getElementById('wp-y').value = existingWp.pos3d[1];
-                document.getElementById('wp-z').value = existingWp.pos3d[0];
-                if (btnToggle) {
-                    btnToggle.innerText = '🗑️ Remove Midpoint';
-                    btnToggle.style.background = 'linear-gradient(135deg, #ff1744 0%, #d500f9 100%)';
-                }
-            } else {
-                let midX = 48, midY = 48, midZ = 48;
-                const curve = latestResolvedCurves[activeFiberId];
-                if (curve && curve.length > 0) {
-                    const midVoxel = curve[Math.floor(curve.length / 2)];
-                    midZ = midVoxel[0];
-                    midY = midVoxel[1];
-                    midX = midVoxel[2];
-                } else {
-                    const fSeeds = seedsList.filter(s => s.fiber_id === activeFiberId);
-                    if (fSeeds.length >= 2) {
-                        midZ = Math.round((fSeeds[0].pos3d[0] + fSeeds[1].pos3d[0]) / 2);
-                        midY = Math.round((fSeeds[0].pos3d[1] + fSeeds[1].pos3d[1]) / 2);
-                        midX = Math.round((fSeeds[0].pos3d[2] + fSeeds[1].pos3d[2]) / 2);
-                    }
-                }
-                document.getElementById('wp-x').value = midX;
-                document.getElementById('wp-y').value = midY;
-                document.getElementById('wp-z').value = midZ;
-                if (btnToggle) {
-                    btnToggle.innerText = '➕ Add Midpoint';
-                    btnToggle.style.background = 'linear-gradient(135deg, #00e5ff 0%, #00b0ff 100%)';
-                }
-            }
-        }
-
-        function toggleWaypoint() {
-            const existingIdx = seedsList.findIndex(s => s.fiber_id === activeFiberId && (s.is_waypoint || s.face === 'waypoint' || s.face === 'internal'));
-            if (existingIdx >= 0) {
-                seedsList.splice(existingIdx, 1);
-                updateThreeSeeds();
-                updateSeedsDock();
-                syncWaypointInputsForActiveFiber();
-                redrawFiberCurveLocally(activeFiberId);
-            } else {
-                onWaypointCoordInput(true);
-                syncWaypointInputsForActiveFiber();
-            }
-        }
-
-        function onWaypointCoordInput(forceAdd = false) {
-            const x = parseInt(document.getElementById('wp-x').value);
-            const y = parseInt(document.getElementById('wp-y').value);
-            const z = parseInt(document.getElementById('wp-z').value);
-
-            if (isNaN(x) || isNaN(y) || isNaN(z) || x < 0 || x >= 96 || y < 0 || y >= 96 || z < 0 || z >= 96) return;
-
-            let wp = seedsList.find(s => s.fiber_id === activeFiberId && (s.is_waypoint || s.face === 'waypoint' || s.face === 'internal'));
-            if (!wp) {
-                const newWp = {
-                    face: 'waypoint',
-                    u: x,
-                    v: y,
-                    pos3d: [z, y, x],
-                    fiber_id: activeFiberId,
-                    is_waypoint: true
-                };
-
-                const fiberIndices = [];
-                seedsList.forEach((s, idx) => {
-                    if (s.fiber_id === activeFiberId) fiberIndices.push(idx);
-                });
-                if (fiberIndices.length >= 2) {
-                    seedsList.splice(fiberIndices[fiberIndices.length - 1], 0, newWp);
-                } else {
-                    seedsList.push(newWp);
-                }
-                wp = newWp;
-            } else {
-                wp.pos3d = [z, y, x];
-                wp.u = x;
-                wp.v = y;
-            }
-
-            updateThreeSeeds();
-            updateSeedsDock();
-            syncWaypointInputsForActiveFiber();
-            redrawFiberCurveLocally(activeFiberId);
-        }
-
         function deleteWaypoint(fid, z, y, x) {
             const idx = seedsList.findIndex(s => s.fiber_id === fid && s.pos3d[0] === z && s.pos3d[1] === y && s.pos3d[2] === x);
             if (idx >= 0) {
                 seedsList.splice(idx, 1);
                 updateThreeSeeds();
                 updateSeedsDock();
-                syncWaypointInputsForActiveFiber();
                 redrawFiberCurveLocally(fid);
             }
         }
@@ -1536,22 +1818,6 @@ HTML_TEMPLATE = """
                 if (maxSlider) maxSlider.value = maxVal;
                 if (spanTag) spanTag.innerText = `Δ${maxVal - minVal + 1}`;
             });
-
-            const dz = cropState.z_max - cropState.z_min + 1;
-            const dy = cropState.y_max - cropState.y_min + 1;
-            const dx = cropState.x_max - cropState.x_min + 1;
-            const volPct = ((dz * dy * dx) / (96 * 96 * 96) * 100).toFixed(1);
-
-            const badge = document.getElementById('crop-stats-badge');
-            const dimText = document.getElementById('crop-dim-text');
-
-            if (!isCropFull()) {
-                if (badge) badge.innerHTML = `<strong style="color:var(--accent-cyan);">ROI: ${dz}×${dy}×${dx} (${volPct}%)</strong>`;
-                if (dimText) dimText.innerText = `Sub-box: ${dz} × ${dy} × ${dx} vx`;
-            } else {
-                if (badge) badge.innerHTML = `Full: 96³ (100%)`;
-                if (dimText) dimText.innerText = `96 × 96 × 96 vx`;
-            }
         }
 
         function applyCropView(debounce = true) {
@@ -1632,15 +1898,15 @@ HTML_TEMPLATE = """
             dirLight.position.set(100, 150, 100);
             scene.add(dirLight);
 
-            // 1. Global Wireframe Box (Outer 96³ reference)
+            // 1. Global Plain Square Wireframe Box (Outer 96³ reference - NO diagonal triangle splitting lines)
             const globalBoxGeo = new THREE.BoxGeometry(96, 96, 96);
-            const globalWireMat = new THREE.MeshBasicMaterial({
-                color: 0x27304a,
-                wireframe: true,
+            const edgesGeo = new THREE.EdgesGeometry(globalBoxGeo);
+            const globalWireMat = new THREE.LineBasicMaterial({
+                color: 0x3d4b6e,
                 transparent: true,
-                opacity: 0.45
+                opacity: 0.65
             });
-            globalWireMesh = new THREE.Mesh(globalBoxGeo, globalWireMat);
+            globalWireMesh = new THREE.LineSegments(edgesGeo, globalWireMat);
             globalWireMesh.position.set(48, 48, 48);
             scene.add(globalWireMesh);
 
@@ -1651,6 +1917,8 @@ HTML_TEMPLATE = """
 
             curves3DGroup = new THREE.Group();
             scene.add(curves3DGroup);
+
+            build3DAxes();
 
             // Robust Click listener for 3D Face Seed Placement
             let downTime = 0;
@@ -1679,6 +1947,144 @@ HTML_TEMPLATE = """
                 renderer.render(scene, camera);
             }
             animate();
+        }
+
+        // =========================================================================
+        // 3D Scene Coordinate Arrows (Anchored directly next to the 3D Big Cube)
+        // =========================================================================
+        function createAxisSprite(labelText, colorHex) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            const colorHexStr = '#' + colorHex.toString(16).padStart(6, '0');
+
+            ctx.beginPath();
+            ctx.arc(64, 64, 52, 0, Math.PI * 2);
+            ctx.fillStyle = colorHexStr;
+            ctx.fill();
+            ctx.lineWidth = 10;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(64, 64, 44, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 54px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(labelText, 64, 66);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMat = new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                depthTest: false
+            });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.scale.set(7.5, 7.5, 1);
+            return sprite;
+        }
+
+        function createAxisArrowMesh(dir, length, colorHex, labelText) {
+            const group = new THREE.Group();
+            const shaftRadius = 1.3;
+            const headRadius = 2.9;
+            const headLength = 7.5;
+            const shaftLength = Math.max(1, length - headLength);
+
+            const shaftGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 16);
+            const shaftMat = new THREE.MeshStandardMaterial({
+                color: colorHex,
+                emissive: colorHex,
+                emissiveIntensity: 0.75,
+                roughness: 0.25
+            });
+            const shaftMesh = new THREE.Mesh(shaftGeo, shaftMat);
+            shaftMesh.position.y = shaftLength / 2;
+
+            const headGeo = new THREE.ConeGeometry(headRadius, headLength, 16);
+            const headMat = new THREE.MeshStandardMaterial({
+                color: colorHex,
+                emissive: colorHex,
+                emissiveIntensity: 0.95,
+                roughness: 0.2
+            });
+            const headMesh = new THREE.Mesh(headGeo, headMat);
+            headMesh.position.y = shaftLength + headLength / 2;
+
+            const arrowObj = new THREE.Group();
+            arrowObj.add(shaftMesh);
+            arrowObj.add(headMesh);
+
+            const normDir = dir.clone().normalize();
+            const defaultDir = new THREE.Vector3(0, 1, 0);
+            const quat = new THREE.Quaternion().setFromUnitVectors(defaultDir, normDir);
+            arrowObj.applyQuaternion(quat);
+
+            group.add(arrowObj);
+
+            const sprite = createAxisSprite(labelText, colorHex);
+            const labelOffset = normDir.clone().multiplyScalar(length + 5.5);
+            sprite.position.copy(labelOffset);
+            group.add(sprite);
+
+            return group;
+        }
+
+        function build3DAxes() {
+            if (axes3DGroup) {
+                scene.remove(axes3DGroup);
+            }
+            axes3DGroup = new THREE.Group();
+            const baseOffset = new THREE.Vector3(-8, -8, -8);
+
+            // Origin Sphere at (-8, -8, -8)
+            const originGeo = new THREE.SphereGeometry(2.2, 16, 16);
+            const originMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                emissive: 0x888888,
+                emissiveIntensity: 0.6,
+                roughness: 0.2
+            });
+            const originMesh = new THREE.Mesh(originGeo, originMat);
+            originMesh.position.copy(baseOffset);
+            axes3DGroup.add(originMesh);
+
+            // +X Arrow (Width, Red)
+            const arrowX = createAxisArrowMesh(new THREE.Vector3(1, 0, 0), 32.0, 0xff3b30, 'X');
+            arrowX.position.copy(baseOffset);
+            axes3DGroup.add(arrowX);
+
+            // +Y Arrow (Height, Green)
+            const arrowY = createAxisArrowMesh(new THREE.Vector3(0, 1, 0), 32.0, 0x30d158, 'Y');
+            arrowY.position.copy(baseOffset);
+            axes3DGroup.add(arrowY);
+
+            // +Z Arrow (Depth, Cyan)
+            const arrowZ = createAxisArrowMesh(new THREE.Vector3(0, 0, 1), 32.0, 0x00e5ff, 'Z');
+            arrowZ.position.copy(baseOffset);
+            axes3DGroup.add(arrowZ);
+
+            axes3DGroup.visible = isAxesVisible;
+            scene.add(axes3DGroup);
+            updateThreeAxesPosition();
+        }
+
+        function toggleAxesVisibility(visible) {
+            isAxesVisible = !!visible;
+            if (axes3DGroup) {
+                axes3DGroup.visible = isAxesVisible;
+            }
+        }
+
+        function updateThreeAxesPosition() {
+            if (!axes3DGroup) return;
+            axes3DGroup.position.set(cropState.x_min, cropState.y_min, cropState.z_min);
         }
 
         function onWindowResize() {
@@ -1770,11 +2176,38 @@ HTML_TEMPLATE = """
                 mesh.geometry = createQuadGeometry(quad.v0, quad.v1, quad.v2, quad.v3);
             });
 
+            if (cropWireMesh) {
+                scene.remove(cropWireMesh);
+                if (cropWireMesh.geometry) cropWireMesh.geometry.dispose();
+                if (cropWireMesh.material) cropWireMesh.material.dispose();
+                cropWireMesh = null;
+            }
+
+            if (!isCropFull()) {
+                const szX = x1 - x0 + 1;
+                const szY = y1 - y0 + 1;
+                const szZ = z1 - z0 + 1;
+                const cX = x0 + szX / 2;
+                const cY = y0 + szY / 2;
+                const cZ = z0 + szZ / 2;
+                const boxGeo = new THREE.BoxGeometry(szX, szY, szZ);
+                const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+                const mat = new THREE.LineBasicMaterial({
+                    color: 0x00e5ff,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                cropWireMesh = new THREE.LineSegments(edgesGeo, mat);
+                cropWireMesh.position.set(cX, cY, cZ);
+                scene.add(cropWireMesh);
+            }
+
             updateThreeCurvesClipping();
+            updateThreeAxesPosition();
         }
 
         function updateThreeFaceTextures(faceImagesGrayscale, faceImagesRGBA) {
-            const imagesToUse = isTransparentMode ? faceImagesRGBA : faceImagesGrayscale;
+            const imagesToUse = faceImagesRGBA || faceImagesGrayscale;
             if (!imagesToUse) return;
 
             Object.entries(imagesToUse).forEach(([faceName, b64Url]) => {
@@ -1797,19 +2230,11 @@ HTML_TEMPLATE = """
             });
         }
 
-        function toggleTransparency(enabled) {
-            isTransparentMode = enabled;
-            if (!isCropFull()) {
-                fetchCroppedData();
-            } else if (currentPatchData) {
-                updateThreeFaceTextures(currentPatchData.face_images, currentPatchData.face_images_rgba);
-            }
-        }
-
-        function togglePointCloud(enabled) {
-            if (pointCloudMesh) {
-                pointCloudMesh.visible = enabled;
-            }
+        function onPointDensityInput(val) {
+            currentPointDensity = parseInt(val) || 0;
+            const tag = document.getElementById('val-point-density');
+            if (tag) tag.innerText = `${currentPointDensity}%`;
+            updateThreePointCloud();
         }
 
         function handleThreeFaceClick(event) {
@@ -1985,10 +2410,7 @@ HTML_TEMPLATE = """
                 if (child.material) child.material.dispose();
             }
 
-            if (!curvesDict) {
-                syncWaypointInputsForActiveFiber();
-                return;
-            }
+            if (!curvesDict) return;
 
             Object.entries(curvesDict).forEach(([fidStr, pts]) => {
                 const fid = parseInt(fidStr);
@@ -2011,8 +2433,6 @@ HTML_TEMPLATE = """
                     curves3DGroup.add(tubeMesh);
                 }
             });
-
-            syncWaypointInputsForActiveFiber();
         }
 
         function updateThreePointCloud(points) {
@@ -2025,7 +2445,7 @@ HTML_TEMPLATE = """
                 pointCloudMesh = null;
             }
 
-            if (!rawPointCloudFull || rawPointCloudFull.length === 0) return;
+            if (!rawPointCloudFull || rawPointCloudFull.length === 0 || currentPointDensity <= 0) return;
 
             const z0 = cropState.z_min;
             const z1 = cropState.z_max;
@@ -2034,33 +2454,41 @@ HTML_TEMPLATE = """
             const x0 = cropState.x_min;
             const x1 = cropState.x_max;
 
-            const filtered = rawPointCloudFull.filter(p => 
+            const inCrop = rawPointCloudFull.filter(p => 
                 p[0] >= z0 && p[0] <= z1 &&
                 p[1] >= y0 && p[1] <= y1 &&
                 p[2] >= x0 && p[2] <= x1
             );
 
-            if (filtered.length === 0) return;
+            if (inCrop.length === 0) return;
+
+            // Continuous linear subsampling: scales point count strictly with currentPointDensity (1% to 100%)
+            const fraction = Math.max(0.01, Math.min(1.0, currentPointDensity / 100.0));
+            const targetCount = Math.max(1, Math.round(inCrop.length * fraction));
+
+            const positions = new Float32Array(targetCount * 3);
+            const stride = inCrop.length / targetCount;
+            for (let i = 0; i < targetCount; i++) {
+                const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
+                const pt = inCrop[srcIdx];
+                positions[i * 3] = pt[2];     // X = x
+                positions[i * 3 + 1] = pt[1]; // Y = y
+                positions[i * 3 + 2] = pt[0]; // Z = z
+            }
 
             const geo = new THREE.BufferGeometry();
-            const positions = new Float32Array(filtered.length * 3);
-            for (let i = 0; i < filtered.length; i++) {
-                positions[i * 3] = filtered[i][2];     // X = x
-                positions[i * 3 + 1] = filtered[i][1]; // Y = y
-                positions[i * 3 + 2] = filtered[i][0]; // Z = z
-            }
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
             const mat = new THREE.PointsMaterial({
                 color: 0x00e5ff,
                 size: 2.2,
                 transparent: true,
-                opacity: 0.45,
+                opacity: Math.min(0.85, 0.35 + fraction * 0.35),
                 blending: THREE.AdditiveBlending,
                 depthWrite: false
             });
             pointCloudMesh = new THREE.Points(geo, mat);
-            pointCloudMesh.visible = document.getElementById('chk-pointcloud').checked;
+            pointCloudMesh.visible = (currentPointDensity > 0);
             scene.add(pointCloudMesh);
         }
 
@@ -2113,6 +2541,11 @@ HTML_TEMPLATE = """
             if (stVal && statusText) stVal.innerText = statusText;
         }
 
+        function setPerfStatus(text) {
+            const el = document.getElementById('perf-badge');
+            if (el) el.innerText = text;
+        }
+
         function handleCoordKey(event) {
             if (event.key === 'Enter') {
                 event.preventDefault();
@@ -2134,75 +2567,79 @@ HTML_TEMPLATE = """
                 const sel = document.getElementById('saved-patches-select');
                 if (sel) sel.value = '';
 
-                document.getElementById('perf-badge').innerText = `⏳ Loading 96³ Subvolume at (${z}, ${y}, ${x})...`;
+                setPerfStatus(`⏳ Loading 96³ Subvolume at (${z}, ${y}, ${x})...`);
                 const res = await fetch('/api/patch/coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ z, y, x })
                 });
                 const data = await res.json();
-                if (!res.ok) {
+                if (!res.ok || data.error) {
+                    setPerfStatus('❌ ' + (data.error || "Failed to load coordinates"));
                     alert(data.error || "Failed to load coordinates");
                     return;
                 }
 
                 currentPatchData = data;
-                seedsList = [];
+                seedsList = data.loaded_seeds || [];
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
-                document.getElementById('origin-badge').innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
-                document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
-                document.getElementById('curated-count').innerText = data.curated_total;
-                document.getElementById('perf-badge').innerText = `📍 Loaded 96³ Subvolume at Origin (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
+                const srcName = data.source_info ? data.source_info.name : '';
+                const isSeg = (data.is_segmented_source || (data.source_info && data.source_info.type === 'segmented_instance'));
 
-                updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
+                const srcBadge = document.getElementById('source-name');
+                if (srcBadge && srcName) {
+                    srcBadge.innerText = `${srcName} [${isSeg ? 'Segmented' : 'Raw'}]`;
+                    srcBadge.style.color = isSeg ? 'var(--accent-lime)' : 'var(--accent-cyan)';
+                }
+
+                const origBadge = document.getElementById('origin-badge');
+                if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+                const densBadge = document.getElementById('density-badge');
+                if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
+                const curatedBadge = document.getElementById('curated-count');
+                if (curatedBadge && data.curated_total !== undefined) curatedBadge.innerText = data.curated_total;
+
+                if (isSeg && data.num_fibers > 0) {
+                    setPerfStatus(`🟢 Loaded ${data.num_fibers} Fibers from Segmented TIFF! Inspect & Fix Wiring.`);
+                    updateSidebarInfo(data.origin, data.density, data.curated_total, `Segmented: ${data.num_fibers} Fibers`);
+                } else {
+                    setPerfStatus(`📍 Loaded 96³ Subvolume at Origin (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`);
+                    updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
+                }
 
                 rawPointCloudFull = data.point_cloud || [];
                 applyCropView(false);
 
                 activeFiberId = 1;
-                renderThree3DCurves(null);
+                if (data.curves_3d && Object.keys(data.curves_3d).length > 0) {
+                    renderThree3DCurves(data.curves_3d);
+                } else {
+                    renderThree3DCurves(null);
+                }
+
                 updateThreeSeeds();
                 updateSeedsDock();
                 initIdSelector();
             } catch (err) {
                 console.error("Failed to load coordinates:", err);
-                document.getElementById('perf-badge').innerText = '❌ Error loading coordinates';
+                setPerfStatus('❌ Error loading coordinates: ' + (err.message || err));
             }
-        }
-
-        function nudgeCoords(dz, dy, dx) {
-            const zInput = document.getElementById('load-coord-z');
-            const yInput = document.getElementById('load-coord-y');
-            const xInput = document.getElementById('load-coord-x');
-
-            let z = (parseInt(zInput ? zInput.value : 0) || 0) + dz;
-            let y = (parseInt(yInput ? yInput.value : 0) || 0) + dy;
-            let x = (parseInt(xInput ? xInput.value : 0) || 0) + dx;
-
-            if (zInput && zInput.max) z = Math.max(0, Math.min(parseInt(zInput.max), z));
-            if (yInput && yInput.max) y = Math.max(0, Math.min(parseInt(yInput.max), y));
-            if (xInput && xInput.max) x = Math.max(0, Math.min(parseInt(xInput.max), x));
-
-            if (zInput) zInput.value = z;
-            if (yInput) yInput.value = y;
-            if (xInput) xInput.value = x;
-
-            loadManualCoordinates(z, y, x);
         }
 
         async function loadSavedPatch(patchId) {
             if (!patchId) return;
             try {
-                document.getElementById('perf-badge').innerText = `⏳ Loading Saved Sample #${String(patchId).padStart(4, '0')}...`;
+                setPerfStatus(`⏳ Loading Saved Sample #${String(patchId).padStart(4, '0')}...`);
                 const res = await fetch('/api/patch/load', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ patch_id: parseInt(patchId) })
                 });
                 const data = await res.json();
-                if (!res.ok) {
+                if (!res.ok || data.error) {
+                    setPerfStatus('❌ ' + (data.error || "Failed to load patch"));
                     alert(data.error || "Failed to load patch");
                     return;
                 }
@@ -2213,10 +2650,13 @@ HTML_TEMPLATE = """
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
-                document.getElementById('origin-badge').innerHTML = `Sample: <strong>#${String(patchId).padStart(4, '0')}</strong> (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
-                document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
-                document.getElementById('curated-count').innerText = data.curated_total;
-                document.getElementById('perf-badge').innerText = `⚡ Loaded Saved Sample #${String(patchId).padStart(4, '0')} with ${data.num_fibers} Fibers!`;
+                const origBadge = document.getElementById('origin-badge');
+                if (origBadge && data.origin) origBadge.innerHTML = `Sample: <strong>#${String(patchId).padStart(4, '0')}</strong> (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
+                const densBadge = document.getElementById('density-badge');
+                if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
+                const curatedBadge = document.getElementById('curated-count');
+                if (curatedBadge && data.curated_total !== undefined) curatedBadge.innerText = data.curated_total;
+                setPerfStatus(`⚡ Loaded Saved Sample #${String(patchId).padStart(4, '0')} with ${data.num_fibers} Fibers!`);
 
                 updateSidebarInfo(data.origin, data.density, data.curated_total, `Loaded #${String(patchId).padStart(4, '0')} (${data.num_fibers} Fibers)`);
 
@@ -2229,7 +2669,7 @@ HTML_TEMPLATE = """
                 initIdSelector();
             } catch (err) {
                 console.error("Failed to load saved patch:", err);
-                document.getElementById('perf-badge').innerText = '❌ Error loading saved patch';
+                setPerfStatus('❌ Error loading saved patch: ' + (err.message || err));
             }
         }
 
@@ -2239,32 +2679,60 @@ HTML_TEMPLATE = """
                 const sel = document.getElementById('saved-patches-select');
                 if (sel) sel.value = '';
 
-                document.getElementById('perf-badge').innerText = '⏳ Loading 96³ Cube...';
+                setPerfStatus('⏳ Loading 96³ Cube...');
                 const res = await fetch('/api/patch/new?t=' + Date.now(), { cache: 'no-store' });
                 const data = await res.json();
+                if (!res.ok || data.error) {
+                    console.error("API error fetching patch:", data.error);
+                    setPerfStatus('❌ ' + (data.error || 'Error fetching patch'));
+                    return;
+                }
+
                 currentPatchData = data;
-                seedsList = [];
+                seedsList = data.loaded_seeds || [];
 
                 updateCoordinateInputs(data.origin, data.max_origin);
 
-                document.getElementById('origin-badge').innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
-                document.getElementById('density-badge').innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
-                document.getElementById('curated-count').innerText = data.curated_total;
-                document.getElementById('perf-badge').innerText = 'Ready for Seed Placement';
+                const srcName = data.source_info ? data.source_info.name : '';
+                const isSeg = (data.is_segmented_source || (data.source_info && data.source_info.type === 'segmented_instance'));
 
-                updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
+                const srcBadge = document.getElementById('source-name');
+                if (srcBadge && srcName) {
+                    srcBadge.innerText = `${srcName} [${isSeg ? 'Segmented' : 'Raw'}]`;
+                    srcBadge.style.color = isSeg ? 'var(--accent-lime)' : 'var(--accent-cyan)';
+                }
+
+                const origBadgeRand = document.getElementById('origin-badge');
+                if (origBadgeRand && data.origin) origBadgeRand.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+                const densBadgeRand = document.getElementById('density-badge');
+                if (densBadgeRand && data.density !== undefined) densBadgeRand.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
+                const curatedBadgeRand = document.getElementById('curated-count');
+                if (curatedBadgeRand && data.curated_total !== undefined) curatedBadgeRand.innerText = data.curated_total;
+
+                if (isSeg && data.num_fibers > 0) {
+                    setPerfStatus(`🟢 Loaded ${data.num_fibers} Fibers from Segmented TIFF! Inspect & Fix Wiring.`);
+                    updateSidebarInfo(data.origin, data.density, data.curated_total, `Segmented: ${data.num_fibers} Fibers`);
+                } else {
+                    setPerfStatus('Ready for Seed Placement');
+                    updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
+                }
 
                 rawPointCloudFull = data.point_cloud || [];
                 applyCropView(false);
 
                 activeFiberId = 1;
-                renderThree3DCurves(null);
+                if (data.curves_3d && Object.keys(data.curves_3d).length > 0) {
+                    renderThree3DCurves(data.curves_3d);
+                } else {
+                    renderThree3DCurves(null);
+                }
+
                 updateThreeSeeds();
                 updateSeedsDock();
                 initIdSelector();
             } catch (err) {
                 console.error("Failed to fetch patch:", err);
-                document.getElementById('perf-badge').innerText = '❌ Error fetching patch';
+                setPerfStatus('❌ Error fetching patch: ' + (err.message || err));
             }
         }
 
@@ -2389,6 +2857,221 @@ HTML_TEMPLATE = """
             }
         }
 
+        // =====================================================================
+        // Open File Modal & Custom Segmented Volume Loading Logic
+        // =====================================================================
+
+        async function openFileModal() {
+            const modal = document.getElementById('file-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+
+            const grid = document.getElementById('modal-preset-pills');
+            if (grid) {
+                grid.innerHTML = '<div style="color: var(--text-muted); font-size: 11px; padding: 4px;">🔍 Scanning workspace volumes...</div>';
+            }
+
+            try {
+                const res = await fetch('/api/files/available?t=' + Date.now());
+                const data = await res.json();
+                if (grid) {
+                    grid.innerHTML = '';
+
+                    // Segmented Instances (Top Priority)
+                    if (data.segmented && data.segmented.length > 0) {
+                        const sec = document.createElement('div');
+                        sec.style = "font-size:10px; font-weight:800; color:var(--accent-lime); text-transform:uppercase; margin-bottom:4px;";
+                        sec.innerText = "⭐ Segmented Instances (Auto-Extracts Centerlines & Wiring):";
+                        grid.appendChild(sec);
+
+                        data.segmented.forEach(f => {
+                            const item = document.createElement('div');
+                            item.className = 'preset-item';
+                            item.innerHTML = `<span class="preset-item-name">${f.path}</span> <span class="preset-tag segmented">Segmented (${f.size_mb} MB)</span>`;
+                            item.onclick = () => {
+                                document.getElementById('modal-file-path').value = f.path;
+                            };
+                            grid.appendChild(item);
+                        });
+                    }
+
+                    // Raw Volumes
+                    if (data.raw && data.raw.length > 0) {
+                        const sec = document.createElement('div');
+                        sec.style = "font-size:10px; font-weight:800; color:var(--accent-cyan); text-transform:uppercase; margin:8px 0 4px 0;";
+                        sec.innerText = "🔬 Raw Microscopy Volumes:";
+                        grid.appendChild(sec);
+
+                        data.raw.slice(0, 10).forEach(f => {
+                            const item = document.createElement('div');
+                            item.className = 'preset-item';
+                            item.innerHTML = `<span class="preset-item-name">${f.path}</span> <span class="preset-tag raw">Raw (${f.size_mb} MB)</span>`;
+                            item.onclick = () => {
+                                document.getElementById('modal-file-path').value = f.path;
+                            };
+                            grid.appendChild(item);
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load available files:", e);
+                if (grid) grid.innerHTML = '<div style="color: var(--accent-magenta); font-size: 11px;">Error scanning files</div>';
+            }
+        }
+
+        function closeFileModal() {
+            const modal = document.getElementById('file-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function toggleModalCoordMode() {
+            const isManual = document.getElementById('modal-mode-manual').checked;
+            const manualDiv = document.getElementById('modal-manual-coords');
+            if (manualDiv) manualDiv.style.display = isManual ? 'flex' : 'none';
+        }
+
+        // Apply Patch Data & Re-render Viewports
+        function applyLoadedPatchData(data) {
+            currentPatchData = data;
+            currentlyLoadedPatchIndex = null;
+            seedsList = data.loaded_seeds || [];
+
+            updateCoordinateInputs(data.origin, data.max_origin);
+
+            const srcName = data.source_info ? data.source_info.name : 'volume';
+            const isSeg = (data.is_segmented_source || (data.source_info && data.source_info.type === 'segmented_instance'));
+
+            const srcBadge = document.getElementById('source-name');
+            if (srcBadge) {
+                srcBadge.innerText = `${srcName} [${isSeg ? 'Segmented' : 'Raw'}]`;
+                srcBadge.style.color = isSeg ? 'var(--accent-lime)' : 'var(--accent-cyan)';
+            }
+
+            const origBadge = document.getElementById('origin-badge');
+            if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+            const densBadge = document.getElementById('density-badge');
+            if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
+            const curatedBadge = document.getElementById('curated-count');
+            if (curatedBadge && data.curated_total !== undefined) curatedBadge.innerText = data.curated_total;
+
+            if (isSeg && data.num_fibers > 0) {
+                setPerfStatus(`🟢 Loaded ${data.num_fibers} Fibers from Segmented TIFF! Inspect & Fix Wiring.`);
+                updateSidebarInfo(data.origin, data.density, data.curated_total, `Segmented: ${data.num_fibers} Fibers`);
+            } else {
+                setPerfStatus(`📂 Opened ${srcName}`);
+                updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
+            }
+
+            rawPointCloudFull = data.point_cloud || [];
+            applyCropView(false);
+
+            activeFiberId = 1;
+            if (data.curves_3d && Object.keys(data.curves_3d).length > 0) {
+                renderThree3DCurves(data.curves_3d);
+            } else {
+                renderThree3DCurves(null);
+            }
+
+            updateThreeSeeds();
+            updateSeedsDock();
+            initIdSelector();
+        }
+
+        async function handleBrowserFileSelect(input) {
+            if (!input.files || input.files.length === 0) return;
+            const file = input.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            document.getElementById('perf-badge').innerText = `⏳ Uploading and parsing ${file.name}...`;
+            try {
+                const res = await fetch('/api/volume/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Failed to upload volume");
+                    document.getElementById('perf-badge').innerText = '❌ Upload error';
+                    return;
+                }
+                closeFileModal();
+                applyLoadedPatchData(data);
+            } catch (err) {
+                console.error("Upload error:", err);
+                alert("Upload error: " + err.message);
+                document.getElementById('perf-badge').innerText = '❌ Upload error';
+            }
+        }
+
+        // Drag & Drop Volume Loader
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                if (file.name.match(/\.(tif|tiff|npy)$/i)) {
+                    handleBrowserFileSelect({ files: [file] });
+                } else {
+                    alert("Please drop a 3D .tif, .tiff, or .npy file.");
+                }
+            }
+        });
+
+        async function submitOpenFile() {
+            const filePath = document.getElementById('modal-file-path').value.trim();
+            if (!filePath) {
+                alert("Please specify a file path (.tif, .tiff, .npy)");
+                return;
+            }
+            const rawPath = document.getElementById('modal-raw-path').value.trim();
+            const isManual = document.getElementById('modal-mode-manual').checked;
+
+            let z = null, y = null, x = null;
+            if (isManual) {
+                z = parseInt(document.getElementById('modal-z').value) || 0;
+                y = parseInt(document.getElementById('modal-y').value) || 0;
+                x = parseInt(document.getElementById('modal-x').value) || 0;
+            }
+
+            const btn = document.getElementById('btn-modal-open');
+            btn.innerText = "⏳ Loading Volume & Centerlines...";
+            btn.disabled = true;
+
+            try {
+                const payload = { file_path: filePath };
+                if (rawPath) payload.raw_path = rawPath;
+                if (z !== null) { payload.z = z; payload.y = y; payload.x = x; }
+
+                const res = await fetch('/api/volume/open', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Failed to open file");
+                    btn.innerText = "🚀 Open & Inspect Patch";
+                    btn.disabled = false;
+                    return;
+                }
+
+                closeFileModal();
+                applyLoadedPatchData(data);
+            } catch (err) {
+                console.error("Failed to open volume file:", err);
+                alert("Error opening volume file: " + err.message);
+            } finally {
+                btn.innerText = "🚀 Open & Inspect Patch";
+                btn.disabled = false;
+            }
+        }
+
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
                 if (e.code === 'Enter' && e.target.classList.contains('global-coord-input')) {
@@ -2443,6 +3126,53 @@ def add_no_cache_headers(response):
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/volume/upload', methods=['POST'])
+def api_upload_volume():
+    """Uploads a volume file via HTML5 browser file picker or drag-and-drop."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in request'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    upload_dir = os.path.join('process_data', 'uploaded_volumes')
+    os.makedirs(upload_dir, exist_ok=True)
+    save_path = os.path.join(upload_dir, file.filename).replace('\\', '/')
+    file.save(save_path)
+
+    try:
+        patch_info = engine.open_volume_file(file_path=save_path)
+        return jsonify(patch_info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/files/available', methods=['GET'])
+def api_available_files():
+    try:
+        files = engine.list_available_files()
+        return jsonify(files)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/volume/open', methods=['POST'])
+def api_open_volume():
+    data = request.get_json() or {}
+    file_path = data.get('file_path')
+    raw_path = data.get('raw_path')
+    z = data.get('z')
+    y = data.get('y')
+    x = data.get('x')
+    if not file_path:
+        return jsonify({'error': 'file_path is required'}), 400
+    try:
+        z_val = int(z) if z is not None else None
+        y_val = int(y) if y is not None else None
+        x_val = int(x) if x is not None else None
+        patch_info = engine.open_volume_file(file_path=file_path, raw_path=raw_path, z=z_val, y=y_val, x=x_val)
+        return jsonify(patch_info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/api/patch/new', methods=['GET'])
 def api_new_patch():
@@ -2537,6 +3267,6 @@ def api_stats():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"\n" + "=" * 80)
-    print(f" REAL COLLAGEN 3D BOX ANNOTATOR RUNNING AT: http://127.0.0.1:{port}")
+    print(f" FIBER CURATOR RUNNING AT: http://127.0.0.1:{port}")
     print("=" * 80 + "\n")
     app.run(host='127.0.0.1', port=port, debug=False)
