@@ -348,7 +348,7 @@ class Fiber3DPatchDataset(Dataset):
         fg_prob=0.85,
         jitter_voxels=2,
         real_data_dir='real_train_data',
-        real_stamp_prob=0.50,
+        real_stamp_prob=0.25,
         verbose=False
     ):
         super().__init__()

@@ -11,11 +11,10 @@ An H-rung is:
   3. PERPENDICULAR to those neighbors -- its geometric direction disagrees
      with the orientation of the long fibers it connects
 
-This is a purely geometric/topological criterion. It does NOT rely on the
-orientation field at the junction itself (which can be noisy or averaged).
-Instead it uses:
-  - the neighbor BRANCH orientations  (reliable: long straight fibers)
-  - the rung's own geometric direction (start-to-end vector)
+This is an orientation-guided geometric criterion. It avoids the corrupted
+local vector field at the crossing intersection itself by using:
+  - the reliable neighbor trunk orientation field (long straight fibers)
+  - the rung's own geometric chord direction (start-to-end vector)
 
 Strategy
 --------

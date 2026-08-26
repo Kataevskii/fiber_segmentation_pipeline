@@ -9,8 +9,8 @@ from core.dataset import ensure_individual_fibers_extracted
 
 def main():
     parser = argparse.ArgumentParser(description="Master Training Script for Dual Decoupled 3D Models")
-    parser.add_argument('--epochs', type=int, default=20, help="Number of training epochs per model (default: 20)")
-    parser.add_argument('--batch-size', type=int, default=5, help="Batch size (default: 5)")
+    parser.add_argument('--epochs', type=int, default=50, help="Number of training epochs per model (default: 50)")
+    parser.add_argument('--batch-size', type=int, default=4, help="Batch size (default: 4)")
     parser.add_argument('--grad-accum-steps', type=int, default=1, help="Gradient accumulation steps (default: 1)")
     parser.add_argument('--patch-size', type=int, default=64, help="3D Patch size (default: 64)")
     parser.add_argument('--samples-per-epoch', type=int, default=200, help="Samples per epoch (default: 200)")
@@ -22,7 +22,8 @@ def main():
     parser.add_argument('--real-data-dir', type=str, default='real_train_data', help="Directory containing curated real fibers for real stamping")
     parser.add_argument('--real-stamp-prob', type=float, default=0.25, help="Probability of stamping real fibers into synthetic training patches")
     parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
-    parser.add_argument('--morph-on-the-fly', action='store_true', help="Augment GAD splines and morph real biological fibers on-the-fly")
+    parser.add_argument('--morph-on-the-fly', action='store_true', default=True, help="Augment GAD splines and morph real biological fibers on-the-fly (default: True)")
+    parser.add_argument('--no-morph', action='store_false', dest='morph_on_the_fly', help="Disable on-the-fly morphing")
     parser.add_argument('--real-repeat', type=int, default=3, help="How many times to repeat real curated training triplets relative to synthetic data")
     parser.add_argument('--train-on-all-data', action='store_true', help="Use all real curated patches for training and skip held-out real validation")
     parser.add_argument('--mode', type=str, choices=['both', 'intensity', 'orientation'], default='both',

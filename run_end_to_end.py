@@ -4,14 +4,15 @@ run_end_to_end.py
 Master 1-Click End-to-End Pipeline:
   1. Sliding-Window Neural Field Inference (Intensity & Orientation U-Nets)
   2. 3D Medial Axis Extraction & Spur Pruning
-  3. Orientation-Decoupled Transverse H-Severing
+  3. Orientation-Guided Transverse H-Severing
   4. Fragment Graph Construction with Robust Durable Endpoint Averaging
   5. Post-H-Sever Direction-Durable Bridge Candidate Search
   6. Global Minimum-Cost Topology Optimization
   7. Multi-Label Voronoi Instance Diffusion
+  8. Short Fiber Pruning (< 5 vx) & Color Re-propagation
 
 Usage:
-  python fiber_resolution_pipeline/run_end_to_end.py --input process_data/COLLAGENCROP_003_0000.tif --out outputs/end_to_end_collagen
+  python fiber_resolution_pipeline/run_end_to_end.py
 """
 
 import os
@@ -21,13 +22,14 @@ import time
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from inference.run_inference import run_inference
+from inference.run_inference import run_inference, get_default_input_volume
 from inference.run_topology_optimization import run_topology_optimization, DEFAULT_PARAMS
 
 
 def main():
+    _default_input = get_default_input_volume()
     parser = argparse.ArgumentParser(description="Master End-to-End Fiber Resolution Pipeline")
-    parser.add_argument('--input', type=str, default='process_data/COLLAGENCROP_003_0000.tif', help="Input microscopy volume (.tif)")
+    parser.add_argument('--input', type=str, default=_default_input, help=f"Input microscopy volume (.tif) (default: {_default_input})")
     parser.add_argument('--intensity-ckpt', type=str, default='checkpoints/best_intensity_unet.pth')
     parser.add_argument('--orientation-ckpt', type=str, default='checkpoints/best_orientation_unet.pth')
     parser.add_argument('--patch-size', type=int, default=64)
@@ -36,7 +38,7 @@ def main():
     parser.add_argument('--cut-border', type=int, default=32, help="Margin in voxels (e.g. 32) to sever outer boundary loops")
     parser.add_argument('--out', type=str, default='outputs/fiber_resolution_final')
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
-    parser.add_argument('--min-fiber-length', type=int, default=10, help="Minimum fiber centerline length in voxels (default: 10)")
+    parser.add_argument('--min-fiber-length', type=int, default=5, help="Minimum fiber centerline length in voxels (default: 5)")
     args = parser.parse_args()
 
     t_start = time.time()

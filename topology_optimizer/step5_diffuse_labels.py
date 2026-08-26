@@ -28,7 +28,7 @@ def build_labeled_skeleton(
     chains: list[FiberChain],
     seg_labels: np.ndarray | None,
     volume_shape: tuple[int, int, int],
-    min_chain_length: int = 10,
+    min_chain_length: int = 5,
     out_skel_mmap: np.ndarray | None = None
 ) -> tuple[np.ndarray, int]:
     """
@@ -215,7 +215,7 @@ def diffuse_labels_voronoi(
 def prune_short_fibers_and_repropagate(
     inst_skel: np.ndarray,
     inst_vol: np.ndarray,
-    min_length: int = 10,
+    min_length: int = 5,
     chunk_size: int = 1000000,
     verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, int]:
@@ -231,7 +231,7 @@ def prune_short_fibers_and_repropagate(
     ----------
     inst_skel  : (D, H, W) int32 labeled skeleton (in-place or memmap)
     inst_vol   : (D, H, W) int32 labeled instance volume (in-place or memmap)
-    min_length : int (default: 10) minimum centerline length in voxels
+    min_length : int (default: 5) minimum centerline length in voxels
     chunk_size : int query chunk size for memory safety
     verbose    : bool
 

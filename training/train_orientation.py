@@ -80,17 +80,17 @@ def train_orientation_model(
     real_train_dir='real_train_data/curated_patches',
     real_val_dir='real_train_data/curated_patches',
     real_data_dir=None,
-    real_stamp_prob=0.0,
+    real_stamp_prob=0.25,
     real_repeat=3,
     test_dir='test_data',
     train_on_all_data=False,
     real_only=False,
-    morph_on_the_fly=False,
+    morph_on_the_fly=True,
     patch_size=64,
-    batch_size=2,
-    grad_accum_steps=2,
-    epochs=10,
-    samples_per_epoch=250,
+    batch_size=4,
+    grad_accum_steps=1,
+    epochs=50,
+    samples_per_epoch=200,
     base_channels=32,
     lr=5e-4,
     pretrained_path=None,
@@ -369,18 +369,19 @@ def train_orientation_model(
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Train Dedicated Orientation UNet3D Model")
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--batch-size', type=int, default=2)
-    parser.add_argument('--grad-accum-steps', type=int, default=2)
-    parser.add_argument('--patch-size', type=int, default=96)
-    parser.add_argument('--samples-per-epoch', type=int, default=250)
-    parser.add_argument('--base-channels', type=int, default=24)
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--grad-accum-steps', type=int, default=1)
+    parser.add_argument('--patch-size', type=int, default=64)
+    parser.add_argument('--samples-per-epoch', type=int, default=200)
+    parser.add_argument('--base-channels', type=int, default=32)
     parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--pretrained', type=str, default=None, help="Pretrained checkpoint path (default: None - train from scratch)")
     parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
-    parser.add_argument('--morph-on-the-fly', action='store_true', help="Augment GAD splines and morph real biological fibers on-the-fly")
+    parser.add_argument('--morph-on-the-fly', action='store_true', default=True, help="Augment GAD splines and morph real biological fibers on-the-fly (default: True)")
+    parser.add_argument('--no-morph', action='store_false', dest='morph_on_the_fly', help="Disable on-the-fly morphing")
     parser.add_argument('--train-on-all-data', action='store_true', help="Train on all real curated patches with no held-out validation")
-    parser.add_argument('--real-stamp-prob', type=float, default=0.0, help="Probability of stamping real fibers")
+    parser.add_argument('--real-stamp-prob', type=float, default=0.25, help="Probability of stamping real fibers")
     parser.add_argument('--save-path', type=str, default='checkpoints/best_orientation_unet.pth')
     args = parser.parse_args()
 

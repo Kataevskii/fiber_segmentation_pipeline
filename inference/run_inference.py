@@ -30,6 +30,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from core.models import IntensityUNet3D, OrientationUNet3D, infer_base_channels_from_checkpoint
 
 
+def get_default_input_volume(target_dir='process_data'):
+    """Finds and returns the first .tif, .tiff, or .npy file in the specified directory."""
+    if os.path.isdir(target_dir):
+        valid_exts = ('.tif', '.tiff', '.npy')
+        files = [
+            os.path.join(target_dir, f)
+            for f in sorted(os.listdir(target_dir))
+            if f.lower().endswith(valid_exts) and os.path.isfile(os.path.join(target_dir, f))
+        ]
+        if files:
+            return files[0]
+    return 'process_data/COLLAGENCROP_003_0000.tif'
+
+
 def predict_sliding_window(
     model,
     volume,
@@ -170,17 +184,19 @@ def predict_sliding_window(
 
 
 def run_inference(
-    input_path='process_data/COLLAGENCROP_003_0000.tif',
+    input_path=None,
     intensity_ckpt='checkpoints/best_intensity_unet.pth',
     orientation_ckpt='checkpoints/best_orientation_unet.pth',
     patch_size=64,
     stride=32,
     batch_size=4,
     base_channels=32,
-    output_prefix='outputs/dual_collagen',
+    output_prefix='outputs/fiber',
     mode='both',
     chunk_size=32
 ):
+    if input_path is None:
+        input_path = get_default_input_volume()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mode_normalized = mode.lower().replace('-', '_')
 
@@ -374,8 +390,9 @@ def run_inference(
 
 
 if __name__ == '__main__':
+    _default_input = get_default_input_volume()
     parser = argparse.ArgumentParser(description="Sliding-Window Neural Field Inference")
-    parser.add_argument('--input', type=str, default='process_data/COLLAGENCROP_003_0000.tif', help="Path to input .tif volume")
+    parser.add_argument('--input', type=str, default=_default_input, help=f"Path to input .tif volume (default: {_default_input})")
     parser.add_argument('--mode', type=str, default='both', choices=['both', 'intensity', 'orientation', 'intensity_only', 'orientation_only'],
                         help="Inference mode: 'both' (default), 'intensity', or 'orientation'")
     parser.add_argument('--intensity-only', action='store_true', help="Shortcut to run only Intensity Specialist")
@@ -389,7 +406,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=4, help="GPU batch size")
     parser.add_argument('--base-channels', type=int, default=32, help="U-Net base channel capacity")
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
-    parser.add_argument('--output-prefix', type=str, default='outputs/dual_collagen', help="Output path prefix")
+    parser.add_argument('--output-prefix', type=str, default='outputs/fiber', help="Output path prefix (default: outputs/fiber)")
     args = parser.parse_args()
 
     mode = args.mode
