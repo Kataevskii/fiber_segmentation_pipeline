@@ -1,0 +1,11 @@
+**/__pycache__
+/augmented_data/*
+/checkpoints/*
+/outputs/*
+/process_data/*
+/raw_data/*
+/real_train_data/*
+/test_data/*
+/val_data/*
+/scratch_test_*
+
