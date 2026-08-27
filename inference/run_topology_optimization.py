@@ -8,8 +8,8 @@ Executes the Global Fiber Topology Optimization Pipeline directly on the full vo
   4. Vectorized Fragment Graph Construction & Durable Endpoint Averaging
   5. Post-H-Sever Direction-Durable Multi-Probe Gap Candidate Search
   6. Global Min-Cost Linear Assignment Matching with Degree-1 & No-Cycle Constraints (Zero False Merges)
-  7. Fast Multi-Threaded cKDTree Voronoi Label Diffusion (Disk-Backed open_memmap)
-  8. Short Fiber Pruning (< 10 vx) & Color Re-propagation
+  7. Connected-Component Bounded Label Diffusion (Zero bleed across empty voxels)
+  8. Short Fiber Filtering (< 5 vx) before Label Diffusion
 
 Modes:
   - 'direct' (default): Runs global topology optimization directly across the entire volume with strict degree-1 matching.
@@ -29,6 +29,7 @@ from skimage.morphology import skeletonize
 from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
+import tifffile
 from tqdm import tqdm
 
 # Ensure package root is in path
@@ -42,6 +43,133 @@ from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diff
 from topology_optimizer.clean_border_artifacts import crop_and_separate_border_fibers, separate_broken_fibers
 from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad, compute_metrics
 from topology_optimizer.visualize_results import save_fiber_length_histogram, export_uint16_tiff
+
+
+def get_default_volume(target_dir='process_data'):
+    """Finds and returns the first .tif, .tiff, or .npy volume file in the specified directory."""
+    if os.path.isdir(target_dir):
+        valid_exts = ('.tif', '.tiff', '.npy')
+        files = [
+            os.path.join(target_dir, f).replace('\\', '/')
+            for f in sorted(os.listdir(target_dir))
+            if f.lower().endswith(valid_exts)
+            and not f.lower().endswith(('_intensity.npy', '_orientation.npy', '_skel.npy', '_skeleton.npy', '_instance.npy'))
+            and os.path.isfile(os.path.join(target_dir, f))
+        ]
+        if files:
+            return files[0]
+    return 'process_data/COLLAGENCROP_003_0000.tif'
+
+
+def get_default_intensity(target_dir='process_data', volume_path=None):
+    """Finds default intensity file from process_data folder first, falling back to outputs."""
+    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
+
+    # 1. Search in process_data folder
+    if os.path.isdir(target_dir):
+        if stem:
+            for ext in ('.npy', '.tif', '.tiff'):
+                p = os.path.join(target_dir, f"{stem}_intensity{ext}").replace('\\', '/')
+                if os.path.exists(p):
+                    return p
+        for name in ['fiber_intensity.npy', 'intensity.npy']:
+            p = os.path.join(target_dir, name).replace('\\', '/')
+            if os.path.exists(p):
+                return p
+        for f in sorted(os.listdir(target_dir)):
+            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+                return os.path.join(target_dir, f).replace('\\', '/')
+
+    # 2. Search in outputs folder
+    if os.path.isdir('outputs'):
+        if stem:
+            for ext in ('.npy', '.tif', '.tiff'):
+                p = os.path.join('outputs', f"{stem}_intensity{ext}").replace('\\', '/')
+                if os.path.exists(p):
+                    return p
+        for name in ['fiber_intensity.npy', 'dual_collagen_64_intensity.npy', 'dual_collagen_intensity.npy', 'dual_collagen_morpho_intensity.npy']:
+            p = os.path.join('outputs', name).replace('\\', '/')
+            if os.path.exists(p):
+                return p
+        for f in sorted(os.listdir('outputs')):
+            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+                return os.path.join('outputs', f).replace('\\', '/')
+
+    return os.path.join(target_dir, 'fiber_intensity.npy').replace('\\', '/')
+
+
+def get_default_orientation(target_dir='process_data', volume_path=None):
+    """Finds default orientation file from process_data folder first, falling back to outputs."""
+    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
+
+    # 1. Search in process_data folder
+    if os.path.isdir(target_dir):
+        if stem:
+            for ext in ('.npy', '.tif', '.tiff'):
+                p = os.path.join(target_dir, f"{stem}_orientation{ext}").replace('\\', '/')
+                if os.path.exists(p):
+                    return p
+        for name in ['fiber_orientation.npy', 'orientation.npy']:
+            p = os.path.join(target_dir, name).replace('\\', '/')
+            if os.path.exists(p):
+                return p
+        for f in sorted(os.listdir(target_dir)):
+            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+                return os.path.join(target_dir, f).replace('\\', '/')
+
+    # 2. Search in outputs folder
+    if os.path.isdir('outputs'):
+        if stem:
+            for ext in ('.npy', '.tif', '.tiff'):
+                p = os.path.join('outputs', f"{stem}_orientation{ext}").replace('\\', '/')
+                if os.path.exists(p):
+                    return p
+        for name in ['fiber_orientation.npy', 'dual_collagen_64_orientation.npy', 'dual_collagen_orientation.npy', 'dual_collagen_morpho_orientation.npy']:
+            p = os.path.join('outputs', name).replace('\\', '/')
+            if os.path.exists(p):
+                return p
+        for f in sorted(os.listdir('outputs')):
+            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+                return os.path.join('outputs', f).replace('\\', '/')
+
+    return os.path.join(target_dir, 'fiber_orientation.npy').replace('\\', '/')
+
+
+def load_volume_array(path: str, mmap_mode: str = 'r'):
+    """Loads a 3D volume from .npy, .tif, or .tiff format."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Volume file not found: {path}")
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.npy':
+        return np.load(path, mmap_mode=mmap_mode)
+    elif ext in ('.tif', '.tiff'):
+        vol = tifffile.imread(path)
+        if vol.dtype == bool:
+            return vol.astype(np.float32)
+        elif vol.max() > 1.0:
+            return (vol > 127).astype(np.float32)
+        else:
+            return (vol > 0.5).astype(np.float32)
+    else:
+        raise ValueError(f"Unsupported volume file format '{ext}' for '{path}'. Supported formats: .npy, .tif, .tiff")
+
+
+def load_neural_field_array(path: str, mmap_mode: str = 'r'):
+    """Loads a neural field array (intensity or orientation) from .npy, .tif, or .tiff format."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Neural field file not found: {path}")
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.npy':
+        return np.load(path, mmap_mode=mmap_mode)
+    elif ext in ('.tif', '.tiff'):
+        arr = tifffile.imread(path)
+        if arr.dtype == np.uint16:
+            return arr.astype(np.float32) / 65535.0
+        elif arr.dtype == np.uint8:
+            return arr.astype(np.float32) / 255.0
+        return arr.astype(np.float32)
+    else:
+        return np.load(path, mmap_mode=mmap_mode)
 
 
 class UnionFind:
@@ -116,10 +244,10 @@ def run_direct_topology_optimization(
     print(" DIRECT GLOBAL FIBER TOPOLOGY OPTIMIZER (Memory-Mapped, Degree <= 1)", flush=True)
     print("=" * 85, flush=True)
 
-    # 1. Load memory-mapped input volumes (0 GB resident RAM)
-    intensity = np.load(intensity_path, mmap_mode='r')
-    orientation = np.load(orientation_path, mmap_mode='r')
-    volume = np.load(volume_path, mmap_mode='r')
+    # 1. Load memory-mapped input volumes (0 GB resident RAM for large .npy)
+    intensity = load_neural_field_array(intensity_path, mmap_mode='r')
+    orientation = load_neural_field_array(orientation_path, mmap_mode='r')
+    volume = load_volume_array(volume_path, mmap_mode='r')
 
     D, H, W = intensity.shape
     print(f"  Volume dimensions: {D} x {H} x {W}", flush=True)
@@ -290,13 +418,15 @@ def run_direct_topology_optimization(
     inst_vol_path = os.path.join(out_dir, 'instance_volume.npy')
 
     inst_skel = np.lib.format.open_memmap(inst_skel_path, mode='w+', dtype=np.int32, shape=(D, H, W))
+    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 5))
     inst_skel, n_kept_chains = build_labeled_skeleton(
         fragments=fragments,
         chains=chains,
         seg_labels=None,
         volume_shape=(D, H, W),
-        min_chain_length=params['min_chain_length'],
-        out_skel_mmap=inst_skel
+        min_chain_length=min_flen,
+        out_skel_mmap=inst_skel,
+        verbose=verbose
     )
     inst_skel.flush()
 
@@ -311,24 +441,7 @@ def run_direct_topology_optimization(
         verbose=verbose
     )
     inst_vol.flush()
-    print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers in final volume", flush=True)
-
-    # -------------------------------------------------------------------------
-    # STAGE 6.5: Small Fiber Pruning (< min_fiber_length vx) & Color Re-propagation
-    # -------------------------------------------------------------------------
-    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 5))
-    if min_flen > 1:
-        print("\n" + "=" * 85, flush=True)
-        print(f" STAGE 6.5: Pruning Short Fibers (< {min_flen} vx) & Propagating Color", flush=True)
-        print("=" * 85, flush=True)
-        t_prune = time.time()
-        inst_skel, inst_vol, n_kept_chains = prune_short_fibers_and_repropagate(
-            inst_skel=inst_skel,
-            inst_vol=inst_vol,
-            min_length=min_flen,
-            verbose=verbose
-        )
-        print(f"  Pruning and color propagation complete in {time.time()-t_prune:.1f}s", flush=True)
+    print(f"  Diffusion complete in {time.time()-t6:.1f}s -- {n_kept_chains} continuous fibers resolved in final volume", flush=True)
 
     # -------------------------------------------------------------------------
     # STAGE 7: Exporting Volumes & Centerlines
@@ -399,10 +512,10 @@ def run_chunked_topology_optimization(
     print(" CHUNKED FIBER TOPOLOGY OPTIMIZER -- OVERLAP CONSENSUS STITCHING (Memory-Mapped)", flush=True)
     print("=" * 85, flush=True)
 
-    # 1. Load memory-mapped input volumes (0 GB resident RAM)
-    intensity = np.load(intensity_path, mmap_mode='r')
-    orientation = np.load(orientation_path, mmap_mode='r')
-    volume = np.load(volume_path, mmap_mode='r')
+    # 1. Load memory-mapped input volumes (0 GB resident RAM for large .npy)
+    intensity = load_neural_field_array(intensity_path, mmap_mode='r')
+    orientation = load_neural_field_array(orientation_path, mmap_mode='r')
+    volume = load_volume_array(volume_path, mmap_mode='r')
 
     D, H, W = intensity.shape
     print(f"  Volume dimensions: {D} x {H} x {W}", flush=True)
@@ -550,7 +663,8 @@ def run_chunked_topology_optimization(
             chains=sub_chains,
             seg_labels=None,
             volume_shape=sub_int.shape,
-            min_chain_length=params['min_chain_length']
+            min_chain_length=params.get('min_fiber_length', params.get('min_chain_length', 5)),
+            verbose=False
         )
 
         sub_fg = (sub_vol > 0.05) | (sub_int >= params['fg_threshold'])
@@ -726,20 +840,6 @@ def run_chunked_topology_optimization(
 
     shutil.rmtree(tmp_chunk_dir, ignore_errors=True)
 
-    # Post-Assembly Small Fiber Pruning & Color Re-propagation
-    min_flen = params.get('min_fiber_length', params.get('min_chain_length', 5))
-    if min_flen > 1:
-        print("\n" + "=" * 85, flush=True)
-        print(f" Post-Assembly: Pruning Short Fibers (< {min_flen} vx) & Propagating Color", flush=True)
-        print("=" * 85, flush=True)
-        t_prune = time.time()
-        inst_skel, inst_vol, _ = prune_short_fibers_and_repropagate(
-            inst_skel=inst_skel,
-            inst_vol=inst_vol,
-            min_length=min_flen,
-            verbose=verbose
-        )
-        print(f"  Pruning and color propagation complete in {time.time()-t_prune:.1f}s", flush=True)
 
     # Export final outputs as uint16 TIFF
     inst_vol_tif_path = os.path.join(out_dir, 'instance_volume.tif')
@@ -779,9 +879,9 @@ def run_chunked_topology_optimization(
 
 
 def run_topology_optimization(
-    intensity_path: str = 'outputs/fiber_intensity.npy',
-    orientation_path: str = 'outputs/fiber_orientation.npy',
-    volume_path: str = 'outputs/fiber_volume.npy',
+    intensity_path: str = None,
+    orientation_path: str = None,
+    volume_path: str = None,
     out_dir: str = 'outputs/topology_resolved',
     gad_path: str = None,
     params: dict = None,
@@ -791,13 +891,14 @@ def run_topology_optimization(
     min_overlap_ratio: float = 0.80,
     verbose: bool = True,
 ):
-    # Seamless fallback to dual_collagen prefix if outputs/fiber_*.npy is not found
-    if not os.path.exists(intensity_path) and os.path.exists('outputs/dual_collagen_intensity.npy'):
-        intensity_path = 'outputs/dual_collagen_intensity.npy'
-    if not os.path.exists(orientation_path) and os.path.exists('outputs/dual_collagen_orientation.npy'):
-        orientation_path = 'outputs/dual_collagen_orientation.npy'
-    if not os.path.exists(volume_path) and os.path.exists('outputs/dual_collagen_volume.npy'):
-        volume_path = 'outputs/dual_collagen_volume.npy'
+    if volume_path is None or not os.path.exists(volume_path):
+        volume_path = get_default_volume('process_data')
+
+    if intensity_path is None or not os.path.exists(intensity_path):
+        intensity_path = get_default_intensity('process_data', volume_path=volume_path)
+
+    if orientation_path is None or not os.path.exists(orientation_path):
+        orientation_path = get_default_orientation('process_data', volume_path=volume_path)
 
     if mode.lower() in ('chunked', 'chunks', 'tile', 'tiled'):
         return run_chunked_topology_optimization(
@@ -825,13 +926,17 @@ def run_topology_optimization(
 
 
 if __name__ == '__main__':
+    default_vol = get_default_volume('process_data')
+    default_int = get_default_intensity('process_data', volume_path=default_vol)
+    default_ori = get_default_orientation('process_data', volume_path=default_vol)
+
     parser = argparse.ArgumentParser(description="Global Fiber Topology Optimization Runner")
-    parser.add_argument('--intensity', type=str, default='outputs/fiber_intensity.npy',
-                        help="Path to predicted intensity .npy (default: outputs/fiber_intensity.npy)")
-    parser.add_argument('--orientation', type=str, default='outputs/fiber_orientation.npy',
-                        help="Path to predicted orientation .npy (default: outputs/fiber_orientation.npy)")
-    parser.add_argument('--volume', type=str, default='outputs/fiber_volume.npy',
-                        help="Path to raw/binary volume .npy (default: outputs/fiber_volume.npy)")
+    parser.add_argument('--volume', type=str, default=default_vol,
+                        help=f"Path to raw/binary volume (.tif, .tiff, .npy) (default: {default_vol})")
+    parser.add_argument('--intensity', type=str, default=default_int,
+                        help=f"Path to predicted intensity .npy/.tif (default: {default_int})")
+    parser.add_argument('--orientation', type=str, default=default_ori,
+                        help=f"Path to predicted orientation .npy/.tif (default: {default_ori})")
     parser.add_argument('--out', type=str, default='outputs/topology_resolved',
                         help="Output directory (default: outputs/topology_resolved)")
     parser.add_argument('--mode', type=str, default='direct', choices=['direct', 'chunked'],
@@ -845,7 +950,7 @@ if __name__ == '__main__':
     parser.add_argument('--border-mode', type=str, default='crop', choices=['crop', 'zero'],
                         help="Border cut mode: 'crop' (default, trims shape) or 'zero' (preserves shape, zeroes boundary)")
     parser.add_argument('--min-fiber-length', type=int, default=5,
-                        help="Minimum fiber centerline length in voxels (default: 5). Shorter fibers are removed and color-propagated.")
+                        help="Minimum fiber centerline length in voxels (default: 5). Shorter fibers are filtered before diffusion.")
     args = parser.parse_args()
 
     params = DEFAULT_PARAMS.copy()

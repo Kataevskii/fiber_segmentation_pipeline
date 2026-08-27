@@ -8,8 +8,8 @@ Master 1-Click End-to-End Pipeline:
   4. Fragment Graph Construction with Robust Durable Endpoint Averaging
   5. Post-H-Sever Direction-Durable Bridge Candidate Search
   6. Global Minimum-Cost Topology Optimization
-  7. Multi-Label Voronoi Instance Diffusion
-  8. Short Fiber Pruning (< 5 vx) & Color Re-propagation
+  7. Short Fiber Filtering (< 5 vx)
+  8. Connected-Component Bounded Voronoi Instance Diffusion
 
 Usage:
   python fiber_resolution_pipeline/run_end_to_end.py

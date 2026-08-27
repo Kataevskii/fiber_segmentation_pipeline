@@ -182,10 +182,10 @@ python inference/run_inference.py --input path/to/volume.tif --output-prefix out
 ---
 
 ### 5. Run Topology Optimization Standalone
-Optimizes topology directly from precomputed neural fields using **direct whole-volume degree-1 linear assignment matching** (32px boundary loop severing and <5 vx small fiber removal + color re-propagation by default):
+Optimizes topology directly from precomputed neural fields (auto-detects the volume from `process_data/` and neural fields from `process_data/` or `outputs/`) using **direct whole-volume degree-1 linear assignment matching** (32px boundary loop severing, <5 vx short fiber filtering, and connected-component bounded Voronoi diffusion without empty-voxel bleed):
 
 ```bash
-# 1-Command: Run global topology optimization on default neural fields
+# 1-Command: Run global topology optimization on default volume from process_data/
 python inference/run_topology_optimization.py
 
 # Optional: Chunked mode with overlap consensus for multi-gigavoxel volumes
@@ -315,8 +315,8 @@ flowchart TD
         ST4["Stage 4: Vectorized Fragment Graph & Durable Endpoints"]
         ST5["Stage 5: Direction-Durable Multi-Probe Gap Search"]
         ST6["Stage 6: Global Min-Cost Matching (Degree ≤ 1, No Cycles)"]
-        ST7["Stage 7: Multi-Label Voronoi Diffusion (open_memmap)"]
-        ST8["Stage 8: Short Fiber Pruning (< 5 vx) & Color Re-propagation"]
+        ST7["Stage 7: Short Fiber Filtering (< 5 vx)"]
+        ST8["Stage 8: Connected-Component Bounded Diffusion (open_memmap)"]
 
         ST1 --> ST2 --> ST3 --> ST4 --> ST5 --> ST6 --> ST7 --> ST8
     end
@@ -483,7 +483,7 @@ fiber_resolution_pipeline/
 │   ├── step2_bridge_gaps.py            # Direction-durable multi-probe gap bridging
 │   ├── step3_build_fragment_graph.py   # Vectorized fragment graph & durable endpoints
 │   ├── step4_optimize_topology.py      # Min-cost priority matching with degree & cycle constraints
-│   ├── step5_diffuse_labels.py         # Multi-label Voronoi diffusion & short fiber pruning (<5 vx)
+│   ├── step5_diffuse_labels.py         # Connected-component bounded Voronoi diffusion & short fiber filtering (<5 vx)
 │   ├── evaluate_against_gt.py          # Ground-truth GAD evaluation metrics
 │   └── visualize_results.py            # Length distribution histogram and uint16 TIFF export
 │

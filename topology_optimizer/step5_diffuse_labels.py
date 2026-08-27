@@ -12,7 +12,9 @@ also labeled.
 """
 
 import gc
+from collections import defaultdict
 import numpy as np
+from scipy.ndimage import label as nd_label
 from scipy.spatial import cKDTree
 
 try:
@@ -29,10 +31,11 @@ def build_labeled_skeleton(
     seg_labels: np.ndarray | None,
     volume_shape: tuple[int, int, int],
     min_chain_length: int = 5,
-    out_skel_mmap: np.ndarray | None = None
+    out_skel_mmap: np.ndarray | None = None,
+    verbose: bool = True
 ) -> tuple[np.ndarray, int]:
     """
-    Build a labeled skeleton volume from chains.
+    Build a labeled skeleton volume from chains, removing short fibers (< min_chain_length).
 
     Parameters
     ----------
@@ -40,8 +43,9 @@ def build_labeled_skeleton(
     chains           : list[FiberChain]
     seg_labels       : (D, H, W) int32 or None
     volume_shape     : (D, H, W)
-    min_chain_length : int -- chains shorter than this are discarded
+    min_chain_length : int -- chains shorter than this are discarded (default: 5)
     out_skel_mmap    : optional pre-allocated or memmapped array to write to
+    verbose          : bool
 
     Returns
     -------
@@ -52,6 +56,13 @@ def build_labeled_skeleton(
     frag_id_to_chain_id: dict[int, int] = {}
 
     kept_chains = [c for c in chains if c.total_length >= min_chain_length]
+    n_removed = len(chains) - len(kept_chains)
+    if verbose:
+        if n_removed > 0:
+            print(f"  [skeleton] Filtered {n_removed} short fiber chains (< {min_chain_length} vx) -> {len(kept_chains)} continuous fibers retained for diffusion.", flush=True)
+        else:
+            print(f"  [skeleton] All {len(kept_chains)} fiber chains kept (len >= {min_chain_length} vx).", flush=True)
+
     for new_id, chain in enumerate(kept_chains, start=1):
         for frag_id in chain.fragment_ids:
             frag_id_to_chain_id[frag_id] = new_id
@@ -98,8 +109,8 @@ def diffuse_labels_voronoi(
     out_vol_mmap: np.ndarray | None = None
 ) -> np.ndarray:
     """
-    Expand labeled skeleton to full fiber volume via fast memory-efficient KDTree Voronoi diffusion.
-    Streams slice-by-slice across 3D volume to guarantee near-zero memory footprint.
+    Expand labeled skeleton to full fiber volume strictly through connected components.
+    Guarantees color is NEVER diffused across empty background voxels or into unseeded components.
 
     Parameters
     ----------
@@ -109,7 +120,7 @@ def diffuse_labels_voronoi(
     intensity    : (D, H, W) float or None -- predicted intensity field
     fg_threshold : float -- intensity threshold for foreground
     vol_threshold: float -- volume threshold for foreground
-    chunk_size   : int   -- query chunk size for memory-safe execution
+    chunk_size   : int   -- query chunk size
     verbose      : bool
     out_vol_mmap : optional pre-allocated or memmapped array
 
@@ -118,48 +129,21 @@ def diffuse_labels_voronoi(
     instance_vol : (D, H, W) int32 -- full labeled instance volume
     """
     D, H, W = inst_skel.shape
-    seed_coords_list = []
-    seed_labels_list = []
-    fg_coords_list = []
 
+    # 1. Build foreground binary mask
     if fg_mask is not None:
-        for z in range(D):
-            s_sl = inst_skel[z]
-            s_idx = np.nonzero(s_sl)
-            if len(s_idx[0]) > 0:
-                sy, sx = s_idx[0], s_idx[1]
-                sz = np.full(len(sy), z, dtype=np.int32)
-                seed_coords_list.append(np.column_stack([sz, sy, sx]))
-                seed_labels_list.append(s_sl[sy, sx])
-
-            fg_sl = (fg_mask[z] > 0) | (s_sl > 0)
-            fg_idx = np.nonzero(fg_sl)
-            if len(fg_idx[0]) > 0:
-                fy, fx = fg_idx[0], fg_idx[1]
-                fz = np.full(len(fy), z, dtype=np.int32)
-                fg_coords_list.append(np.column_stack([fz, fy, fx]))
+        full_fg = (fg_mask > 0) | (inst_skel > 0)
     elif volume is not None and intensity is not None:
-        for z in range(D):
-            s_sl = inst_skel[z]
-            s_idx = np.nonzero(s_sl)
-            if len(s_idx[0]) > 0:
-                sy, sx = s_idx[0], s_idx[1]
-                sz = np.full(len(sy), z, dtype=np.int32)
-                seed_coords_list.append(np.column_stack([sz, sy, sx]))
-                seed_labels_list.append(s_sl[sy, sx])
-
-            v_sl = volume[z]
-            i_sl = intensity[z]
-            fg_sl = (v_sl > vol_threshold) | (i_sl >= fg_threshold) | (s_sl > 0)
-            fg_idx = np.nonzero(fg_sl)
-            if len(fg_idx[0]) > 0:
-                fy, fx = fg_idx[0], fg_idx[1]
-                fz = np.full(len(fy), z, dtype=np.int32)
-                fg_coords_list.append(np.column_stack([fz, fy, fx]))
+        full_fg = (volume > vol_threshold) | (intensity >= fg_threshold) | (inst_skel > 0)
+    elif volume is not None:
+        full_fg = (volume > vol_threshold) | (inst_skel > 0)
+    elif intensity is not None:
+        full_fg = (intensity >= fg_threshold) | (inst_skel > 0)
     else:
-        raise ValueError("Must provide either fg_mask or both volume and intensity.")
+        full_fg = inst_skel > 0
 
-    if not seed_coords_list:
+    seed_idx = np.nonzero(inst_skel)
+    if len(seed_idx[0]) == 0:
         if verbose:
             print("  [diffuse] No labeled seeds -- returning zeros.", flush=True)
         if out_vol_mmap is not None:
@@ -167,26 +151,27 @@ def diffuse_labels_voronoi(
             return out_vol_mmap
         return np.zeros_like(inst_skel, dtype=np.int32)
 
-    seed_coords = np.vstack(seed_coords_list).astype(np.float32)
-    seed_labels = np.concatenate(seed_labels_list)
-    del seed_coords_list, seed_labels_list
-    gc.collect()
-
-    tree = cKDTree(seed_coords)
-    del seed_coords
-    gc.collect()
-
-    if not fg_coords_list:
+    # 2. Extract 3D Connected Components on foreground
+    cc_labels, num_cc = nd_label(full_fg, structure=np.ones((3, 3, 3), dtype=bool))
+    if num_cc == 0:
         if out_vol_mmap is not None:
             out_vol_mmap[:] = 0
             return out_vol_mmap
         return np.zeros_like(inst_skel, dtype=np.int32)
 
-    fg_coords = np.vstack(fg_coords_list)
-    del fg_coords_list
-    gc.collect()
+    # 3. Associate skeleton seeds with their containing connected components
+    skel_z, skel_y, skel_x = seed_idx
+    skel_labels = inst_skel[skel_z, skel_y, skel_x]
+    skel_ccs = cc_labels[skel_z, skel_y, skel_x]
 
-    n_fg = len(fg_coords)
+    comp_seed_indices = defaultdict(list)
+    for i, c_id in enumerate(skel_ccs):
+        if c_id > 0:
+            comp_seed_indices[c_id].append(i)
+
+    # 4. Group all foreground voxels by connected component
+    fg_z, fg_y, fg_x = np.nonzero(full_fg)
+    fg_ccs = cc_labels[fg_z, fg_y, fg_x]
 
     if out_vol_mmap is not None:
         instance_vol = out_vol_mmap
@@ -194,19 +179,57 @@ def diffuse_labels_voronoi(
     else:
         instance_vol = np.zeros_like(inst_skel, dtype=np.int32)
 
-    for start_idx in range(0, n_fg, chunk_size):
-        end_idx = min(start_idx + chunk_size, n_fg)
-        chunk_pts = fg_coords[start_idx:end_idx]
-        _, nearest_idx = tree.query(chunk_pts, workers=-1)
-        instance_vol[chunk_pts[:, 0], chunk_pts[:, 1], chunk_pts[:, 2]] = seed_labels[nearest_idx]
+    # Fast group-by CC using single sort
+    order = np.argsort(fg_ccs)
+    sorted_fg_ccs = fg_ccs[order]
+    sorted_fg_z = fg_z[order]
+    sorted_fg_y = fg_y[order]
+    sorted_fg_x = fg_x[order]
+
+    unique_ccs, split_indices = np.unique(sorted_fg_ccs, return_index=True)
+    split_indices = list(split_indices) + [len(sorted_fg_ccs)]
+
+    n_labeled_voxels = 0
+
+    for idx, c_id in enumerate(unique_ccs):
+        if c_id == 0:
+            continue
+        start = split_indices[idx]
+        end = split_indices[idx + 1]
+
+        # Connected components with NO seeds remain 0 (never cross empty space)
+        if c_id not in comp_seed_indices:
+            continue
+
+        comp_pts_z = sorted_fg_z[start:end]
+        comp_pts_y = sorted_fg_y[start:end]
+        comp_pts_x = sorted_fg_x[start:end]
+
+        seed_idxs = comp_seed_indices[c_id]
+        comp_seed_lbls = skel_labels[seed_idxs]
+        unique_comp_seed_lbls = np.unique(comp_seed_lbls)
+
+        if len(unique_comp_seed_lbls) == 1:
+            instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = unique_comp_seed_lbls[0]
+        else:
+            comp_s_coords = np.column_stack([skel_z[seed_idxs], skel_y[seed_idxs], skel_x[seed_idxs]]).astype(np.float32)
+            tree = cKDTree(comp_s_coords)
+            comp_fg_coords = np.column_stack([comp_pts_z, comp_pts_y, comp_pts_x]).astype(np.float32)
+            _, nearest = tree.query(comp_fg_coords, workers=-1)
+            instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = comp_seed_lbls[nearest]
+
+        n_labeled_voxels += len(comp_pts_z)
+
+    if hasattr(instance_vol, 'flush'):
+        instance_vol.flush()
 
     if verbose:
-        n_fibers = int(np.max(seed_labels)) if len(seed_labels) > 0 else 0
-        print(f"  [diffuse] {n_fibers} fiber instances, "
-              f"{n_fg} foreground voxels labeled (100.0%)",
-              flush=True)
+        n_fibers = int(np.max(skel_labels)) if len(skel_labels) > 0 else 0
+        total_fg = len(fg_z)
+        pct = (n_labeled_voxels / total_fg * 100.0) if total_fg > 0 else 0.0
+        print(f"  [diffuse] {n_fibers} fiber instances, {n_labeled_voxels}/{total_fg} foreground voxels labeled ({pct:.1f}%) across {len(comp_seed_indices)} seeded connected components", flush=True)
 
-    del fg_coords, tree, seed_labels
+    del cc_labels, full_fg, sorted_fg_ccs, sorted_fg_z, sorted_fg_y, sorted_fg_x
     gc.collect()
 
     return instance_vol
