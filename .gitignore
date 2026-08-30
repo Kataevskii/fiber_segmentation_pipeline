@@ -7,5 +7,4 @@
 /real_train_data/*
 /test_data/*
 /val_data/*
-/scratch_test_*
-
+!**.gitkeep
