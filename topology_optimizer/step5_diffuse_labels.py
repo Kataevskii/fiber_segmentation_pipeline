@@ -220,6 +220,9 @@ def diffuse_labels_voronoi(
 
         n_labeled_voxels += len(comp_pts_z)
 
+    # Hard-lock skeleton seeds so they can NEVER be stolen or overwritten
+    instance_vol[skel_z, skel_y, skel_x] = skel_labels
+
     if hasattr(instance_vol, 'flush'):
         instance_vol.flush()
 
@@ -361,6 +364,8 @@ def prune_short_fibers_and_repropagate(
 
             n_repropagated_voxels += len(short_pts)
 
+        # Hard-lock surviving skeleton seeds into volume slice
+        new_v_sl[s_surv_mask] = new_s_sl[s_surv_mask]
         inst_vol[z] = new_v_sl
 
     if hasattr(inst_skel, 'flush'):

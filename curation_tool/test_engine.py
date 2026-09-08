@@ -74,6 +74,13 @@ def test_curation_engine():
         print(f"Resolution Successful: {res['success']}, Resolved {res['num_fibers']} fibers in {res['resolve_time_ms']} ms")
         assert res['success'] == True
 
+        # Verify strict centerline seed preservation in inst_vol
+        inst_skel = engine.current_resolution['inst_skel']
+        inst_vol = engine.current_resolution['inst_vol']
+        skel_mask = inst_skel > 0
+        assert np.all(inst_vol[skel_mask] == inst_skel[skel_mask]), "Centerline voxels must strictly match inst_vol!"
+        print("Centerline seed preservation verified: 0 mismatches.")
+
         # 5. Test saving curated sample to isolated temporary directory
         print("\n--- [5/7] Testing Save Curated Sample & Reloading in Sandbox ---")
         save_res = engine.save_current_curated_sample()
@@ -93,7 +100,10 @@ def test_curation_engine():
         # Test reloading curated patch
         loaded_patch = engine.load_curated_patch(save_res['saved_index'])
         assert loaded_patch['num_fibers'] == res['num_fibers']
-        print(f"Reloaded Patch #{save_res['saved_index']} verified successfully")
+        loaded_skel = np.load(f"{prefix}_centerline.npy")
+        loaded_vol = np.load(f"{prefix}_instance.npy")
+        assert np.all(loaded_vol[loaded_skel > 0] == loaded_skel[loaded_skel > 0]), "Reloaded patch centerline voxels must match instance volume!"
+        print(f"Reloaded Patch #{save_res['saved_index']} verified successfully (0 centerline mismatches)")
 
         # 6. Test opening segmented instance TIFF (if present)
         seg_candidate = 'outputs/instance_volume.tif'

@@ -18,6 +18,11 @@ from scipy.interpolate import splprep, splev
 from skimage.graph import route_through_array
 from skimage.morphology import skeletonize
 
+try:
+    from topology_optimizer.step5_diffuse_labels import diffuse_labels_voronoi
+except ImportError:
+    from step5_diffuse_labels import diffuse_labels_voronoi
+
 class RealDataCurationEngine:
     """
     Deterministic 96x96x96 Real Data Annotation & Geodesic Curvature Resolution Engine.
@@ -548,55 +553,42 @@ class RealDataCurationEngine:
         base_cost = 1.0 / (self.current_dt**2 + 1e-4)
         dynamic_cost = np.ascontiguousarray(base_cost.copy(), dtype=np.float64)
 
-        # Group seeds by fiber ID
         fiber_groups = {}
         for s in seeds:
-            fid = s['fiber_id']
+            fid = s.get('fiber_id', 1)
             fiber_groups.setdefault(fid, []).append(s)
 
         for fid, seed_list in fiber_groups.items():
             if len(seed_list) >= 2:
-                # Order seeds: waypoints in middle
-                endpoints = [s for s in seed_list if not s.get('is_waypoint', False)]
-                waypoints = [s for s in seed_list if s.get('is_waypoint', False)]
-                ordered_seeds = endpoints[:1] + waypoints + endpoints[1:]
-
-                segments = []
-                for i in range(len(ordered_seeds) - 1):
-                    p1 = tuple(int(c) for c in ordered_seeds[i]['pos3d'])
-                    p2 = tuple(int(c) for c in ordered_seeds[i+1]['pos3d'])
+                # Deterministic pair/waypoint geodesic path resolution
+                sorted_seeds = sorted(seed_list, key=lambda s: (s.get('is_waypoint', False), s.get('face', '')))
+                sub_paths = []
+                for k in range(len(sorted_seeds) - 1):
+                    s1 = sorted_seeds[k]
+                    s2 = sorted_seeds[k + 1]
+                    p1 = tuple(int(c) for c in s1['pos3d'])
+                    p2 = tuple(int(c) for c in s2['pos3d'])
 
                     p1_snapped = self._snap_to_foreground(p1)
                     p2_snapped = self._snap_to_foreground(p2)
 
-                    if p1_snapped is None or p2_snapped is None:
-                        continue
+                    if p1_snapped is not None and p2_snapped is not None:
+                        path = self._route_fiber_lane_guided(p1_snapped, p2_snapped, dynamic_cost)
+                        if len(path) > 0:
+                            if len(sub_paths) > 0 and np.array_equal(sub_paths[-1][-1], path[0]):
+                                sub_paths.append(path[1:])
+                            else:
+                                sub_paths.append(path)
 
-                    try:
-                        path_indices, _ = route_through_array(
-                            dynamic_cost,
-                            p1_snapped,
-                            p2_snapped,
-                            fully_connected=True,
-                            geometric=True
-                        )
-                        path_arr = np.array(path_indices, dtype=np.float32)
-                        segments.append(path_arr if i == 0 else path_arr[1:])
-                    except Exception as e:
-                        print(f"Warning: Route segment failed for Fiber {fid}: {e}", flush=True)
+                if len(sub_paths) > 0:
+                    full_curve = np.concatenate(sub_paths, axis=0)
+                    resolved_curves[fid] = full_curve
+                    curves_3d_json[fid] = full_curve.tolist()
 
-                if segments:
-                    try:
-                        full_path = np.vstack(segments)
-                        resolved_curves[fid] = full_path
-                        curves_3d_json[fid] = full_path.tolist()
-
-                        for pt in full_path.astype(int):
-                            dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
-                    except Exception as e:
-                        print(f"Warning: Geodesic route failed for Fiber {fid}: {e}", flush=True)
-
+                    for pt in full_curve.astype(int):
+                        dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
             elif len(seed_list) == 1:
+                # Singleton / terminating fiber: trace inward along DT ridge
                 s = seed_list[0]
                 p_start = tuple(int(c) for c in s['pos3d'])
                 p_snapped = self._snap_to_foreground(p_start)
@@ -609,7 +601,7 @@ class RealDataCurationEngine:
                         for pt in path_arr.astype(int):
                             dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
 
-        # Accelerated Multi-Label 3D Voronoi Diffusion & Target Generation via cKDTree
+        # Multi-Label 3D Connected-Component Voronoi Diffusion & Target Generation
         inst_vol = np.zeros((S, S, S), dtype=np.uint16)
         clean_patch_bin = np.zeros((S, S, S), dtype=bool)
         ori_vol = np.zeros((3, S, S, S), dtype=np.float32)
@@ -617,83 +609,76 @@ class RealDataCurationEngine:
 
         if len(resolved_curves) > 0:
             # Pass 1: Initial Voronoi multi-label diffusion from coarse Dijkstra paths
+            for fid, curve in resolved_curves.items():
+                r_int = np.clip(np.round(curve).astype(int), 0, S - 1)
+                inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
+            inst_vol = diffuse_labels_voronoi(inst_skel, fg_mask=self.current_patch_bin, verbose=False).astype(np.uint16)
+            clean_patch_bin = (inst_vol > 0)
+
+            # Pass 2: Auto-refine each curve to its exact cross-sectional center of mass
+            inst_skel.fill(0)
+            for fid in list(resolved_curves.keys()):
+                f_mask = (inst_vol == fid)
+                if np.sum(f_mask) >= 5:
+                    refined = self._center_curve_to_mask(resolved_curves[fid], f_mask)
+                    resolved_curves[fid] = refined
+                    curves_3d_json[fid] = refined.tolist()
+
+                r_int = np.clip(np.round(resolved_curves[fid]).astype(int), 0, S - 1)
+                inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
+
+            # Pass 3: Recompute multi-label diffusion, exact distance field and targets using centered curves
+            inst_vol = diffuse_labels_voronoi(inst_skel, fg_mask=self.current_patch_bin, verbose=False).astype(np.uint16)
+            clean_patch_bin = (inst_vol > 0)
+
             all_pts = [curve for curve in resolved_curves.values()]
-            all_fids = [np.full(len(curve), fid, dtype=np.uint16) for fid, curve in resolved_curves.items()]
             all_skel_coords = np.vstack(all_pts)
-            all_skel_fids = np.concatenate(all_fids)
+            skel_tree = cKDTree(all_skel_coords)
+            fg_coords = np.argwhere(clean_patch_bin)
 
-            fg_coords = np.argwhere(self.current_patch_bin > 0)
             if len(fg_coords) > 0:
-                skel_tree = cKDTree(all_skel_coords)
-                dists, indices = skel_tree.query(fg_coords, k=1)
-                valid_mask = (dists <= 6.5)
-                valid_fg = fg_coords[valid_mask]
-                nearest_fids = all_skel_fids[indices[valid_mask]]
-
-                inst_vol[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = nearest_fids
-                clean_patch_bin = (inst_vol > 0)
-
-                # Pass 2: Auto-refine each curve to its exact cross-sectional center of mass
-                inst_skel.fill(0)
-                for fid in list(resolved_curves.keys()):
-                    f_mask = (inst_vol == fid)
-                    if np.sum(f_mask) >= 5:
-                        refined = self._center_curve_to_mask(resolved_curves[fid], f_mask)
-                        resolved_curves[fid] = refined
-                        curves_3d_json[fid] = refined.tolist()
-
-                    r_int = np.clip(np.round(resolved_curves[fid]).astype(int), 0, S - 1)
-                    inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
-
-                # Pass 3: Recompute exact distance field and targets using centered curves
-                all_pts = [curve for curve in resolved_curves.values()]
-                all_skel_coords = np.vstack(all_pts)
-                skel_tree = cKDTree(all_skel_coords)
-                dists, _ = skel_tree.query(fg_coords, k=1)
-                valid_mask = (dists <= 6.5)
-                valid_fg = fg_coords[valid_mask]
-                valid_dists = dists[valid_mask]
+                valid_dists, _ = skel_tree.query(fg_coords, k=1)
 
                 # Centerline Gaussian probability field G1(x) with sigma = 1.0
-                intensity_target[valid_fg[:, 0], valid_fg[:, 1], valid_fg[:, 2]] = np.exp(
+                intensity_target[fg_coords[:, 0], fg_coords[:, 1], fg_coords[:, 2]] = np.exp(
                     -(valid_dists**2) / (2.0 * 1.0**2)
                 )
 
                 # Multi-fiber intersection dip calculation (when >= 2 fibers present)
                 if len(resolved_curves) >= 2:
                     fiber_trees = [cKDTree(curve) for curve in resolved_curves.values()]
-                    per_fiber_dists = np.stack([tree.query(valid_fg)[0] for tree in fiber_trees], axis=0)
+                    per_fiber_dists = np.stack([tree.query(fg_coords)[0] for tree in fiber_trees], axis=0)
                     sorted_dists = np.sort(per_fiber_dists, axis=0)
                     d1 = sorted_dists[0]
                     d2 = sorted_dists[1]
                     cross_mask = (d1 <= 3.0) & (d2 <= 3.0)
                     if np.any(cross_mask):
                         g_cross = np.exp(-(d1[cross_mask]**2 + d2[cross_mask]**2) / (2.0 * 1.5**2))
-                        cross_pts = valid_fg[cross_mask]
+                        cross_pts = fg_coords[cross_mask]
                         intensity_target[cross_pts[:, 0], cross_pts[:, 1], cross_pts[:, 2]] -= 1.5 * g_cross
 
                 intensity_target = np.clip(intensity_target, -1.0, 1.0)
 
-                # Fast Analytical Orientation Field (Continuous Local Tangents via cKDTree)
-                for fid, curve in resolved_curves.items():
-                    if len(curve) >= 2:
-                        tangents = np.zeros_like(curve, dtype=np.float32)
-                        tangents[0] = curve[1] - curve[0]
-                        tangents[-1] = curve[-1] - curve[-2]
-                        if len(curve) > 2:
-                            tangents[1:-1] = (curve[2:] - curve[:-2]) / 2.0
-                        norms = np.linalg.norm(tangents, axis=1, keepdims=True)
-                        norms[norms == 0] = 1.0
-                        tangents /= norms
+            # Fast Analytical Orientation Field (Continuous Local Tangents via cKDTree)
+            for fid, curve in resolved_curves.items():
+                if len(curve) >= 2:
+                    tangents = np.zeros_like(curve, dtype=np.float32)
+                    tangents[0] = curve[1] - curve[0]
+                    tangents[-1] = curve[-1] - curve[-2]
+                    if len(curve) > 2:
+                        tangents[1:-1] = (curve[2:] - curve[:-2]) / 2.0
+                    norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+                    norms[norms == 0] = 1.0
+                    tangents /= norms
 
-                        c_tree = cKDTree(curve)
-                        f_mask = (inst_vol == fid)
-                        if np.any(f_mask):
-                            f_coords = np.argwhere(f_mask)
-                            _, nearest_c_idx = c_tree.query(f_coords, k=1)
-                            local_tangs = tangents[nearest_c_idx]
-                            for c in range(3):
-                                ori_vol[c, f_coords[:, 0], f_coords[:, 1], f_coords[:, 2]] = local_tangs[:, c]
+                    c_tree = cKDTree(curve)
+                    f_mask = (inst_vol == fid)
+                    if np.any(f_mask):
+                        f_coords = np.argwhere(f_mask)
+                        _, nearest_c_idx = c_tree.query(f_coords, k=1)
+                        local_tangs = tangents[nearest_c_idx]
+                        for c in range(3):
+                            ori_vol[c, f_coords[:, 0], f_coords[:, 1], f_coords[:, 2]] = local_tangs[:, c]
 
         resolve_time = time.time() - t0
 
