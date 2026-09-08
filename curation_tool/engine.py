@@ -933,20 +933,110 @@ class RealDataCurationEngine:
                 'is_waypoint': bool(s.get('is_waypoint', False))
             })
 
+        # Evaluate donor fiber quality using orientation and boundary geometry
+        fiber_quality = {}
+        intact_count = 0
+        resolved_curves = self.current_resolution.get('resolved_curves', [])
+        S = self.cube_size
+        faces = [
+            ('z_min', 0, 0.0), ('z_max', 0, S - 1.0),
+            ('y_min', 1, 0.0), ('y_max', 1, S - 1.0),
+            ('x_min', 2, 0.0), ('x_max', 2, S - 1.0)
+        ]
+
+        for item in resolved_curves:
+            if isinstance(item, tuple) and len(item) == 2:
+                fid, curve = item
+            else:
+                continue
+
+            curve = np.array(curve, dtype=np.float32)
+            N = len(curve)
+            if N < 15:
+                fiber_quality[str(fid)] = {'is_valid_donor': False, 'reason': 'too_short', 'length': float(N)}
+                continue
+
+            segs = np.linalg.norm(np.diff(curve, axis=0), axis=1)
+            total_len = float(np.sum(segs))
+            if total_len < 75.0:
+                fiber_quality[str(fid)] = {'is_valid_donor': False, 'reason': f'short_length_{total_len:.1f}', 'length': total_len}
+                continue
+
+            tangents = np.zeros_like(curve, dtype=np.float32)
+            tangents[0] = curve[1] - curve[0]
+            tangents[-1] = curve[-1] - curve[-2]
+            tangents[1:-1] = (curve[2:] - curve[:-2]) / 2.0
+            norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            tangents /= norms
+
+            # 1. Interior trunk check: reject if parallel and touching any border
+            start_m = max(3, int(0.06 * N))
+            end_m = N - start_m
+            interior_idx = np.arange(start_m, end_m)
+            is_sliced = False
+            for face_name, axis, val in faces:
+                dists = np.abs(curve[:, axis] - val)
+                t_norm = np.abs(tangents[:, axis])
+                if np.sum((dists[interior_idx] <= 3.5) & (t_norm[interior_idx] < 0.35)) >= 3:
+                    fiber_quality[str(fid)] = {'is_valid_donor': False, 'reason': f'parallel_sliced_at_{face_name}', 'length': total_len}
+                    is_sliced = True
+                    break
+
+            if is_sliced:
+                continue
+
+            # 2. Endpoint check: entrance and exit must touch different boundary faces cleanly
+            p0, p1 = curve[0], curve[-1]
+            t0, t1 = tangents[0], tangents[-1]
+
+            def check_end(p, t):
+                best_f = None
+                min_d = 999.0
+                norm_c = 0.0
+                for name, axis, val in faces:
+                    d = abs(p[axis] - val)
+                    if d < min_d:
+                        min_d = d
+                        best_f = name
+                        norm_c = abs(t[axis])
+                if min_d <= 2.5 and norm_c >= 0.20:
+                    return best_f, norm_c
+                return None, 0.0
+
+            e0, norm0 = check_end(p0, t0)
+            e1, norm1 = check_end(p1, t1)
+
+            if not e0 or not e1 or e0 == e1:
+                fiber_quality[str(fid)] = {'is_valid_donor': False, 'reason': f'invalid_endpoints_{e0}_{e1}', 'length': total_len}
+                continue
+
+            fiber_quality[str(fid)] = {
+                'is_valid_donor': True,
+                'length': round(total_len, 1),
+                'entry_face': e0,
+                'exit_face': e1,
+                'entry_penetration': round(float(norm0), 3),
+                'exit_penetration': round(float(norm1), 3)
+            }
+            intact_count += 1
+
         meta = {
             'patch_index': int(idx),
             'origin_zyx': [int(c) for c in self.current_patch_origin],
             'cube_size': int(self.cube_size),
             'num_fibers': int(self.current_resolution['num_fibers']),
+            'intact_donor_fibers_count': int(intact_count),
             'density': float(np.mean(patch_bin)),
             'seeds': clean_seeds,
+            'fiber_quality': fiber_quality,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         with open(f"{prefix}_meta.json", 'w', encoding='utf-8') as f:
             json.dump(meta, f, indent=2)
 
         self.patch_counter = len([f for f in os.listdir(self.curated_output_dir) if f.endswith('_meta.json')])
-        print(f"Saved Curated Real Training Sample #{idx:04d} to {self.curated_output_dir}/", flush=True)
+        print(f"Saved Curated Real Training Sample #{idx:04d} ({intact_count} intact donor fibers) to {self.curated_output_dir}/", flush=True)
 
         return {
             'saved_index': idx,
