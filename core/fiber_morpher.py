@@ -106,12 +106,13 @@ class RealFiberInstance:
 
 class RealFiberLibrary:
     """Library of extracted continuous real fibers from curated patches."""
-    def __init__(self, curated_dir='data/curated/patches', cache_path='data/curated/fiber_library.pkl', min_length=75):
+    def __init__(self, curated_dir='data/curated/patches', cache_path='data/curated/fiber_library.pkl', min_length=75, allowed_patches=None, force_rebuild=False):
         self.curated_dir = curated_dir
         self.cache_path = cache_path
         self.min_length = min_length
+        self.allowed_patches = allowed_patches
         self.fibers = []
-        self.load_or_build_library()
+        self.load_or_build_library(force_rebuild=force_rebuild)
 
     def _is_intact_through_fiber(self, ordered_curve, cube_size=96, radius_margin=3.5):
         """
@@ -186,20 +187,63 @@ class RealFiberLibrary:
             try:
                 with open(self.cache_path, 'rb') as f:
                     self.fibers = pickle.load(f)
+                if self.allowed_patches is not None:
+                    allowed_set = {int(p) if str(p).isdigit() else p for p in self.allowed_patches}
+                    allowed_names = {f"patch_{int(p):04d}" if str(p).isdigit() else str(p) for p in self.allowed_patches}
+                    self.fibers = [
+                        f for f in self.fibers
+                        if f.patch_index in allowed_set or f"patch_{f.patch_index:04d}" in allowed_names
+                    ]
                 if self.fibers:
-                    # Filter for intact through-fibers in cached objects
                     intact_count = sum(1 for f in self.fibers if f.is_boundary_continuous)
                     print(f"Loaded {len(self.fibers)} continuous real fibers from cache '{self.cache_path}' ({intact_count} intact through-volume).", flush=True)
                     return
             except Exception:
                 pass
 
+        # Auto-detect allowed patches from individual_fibers if allowed_patches not provided
+        allowed_names = None
+        allowed_set = None
+        if self.allowed_patches is not None:
+            allowed_set = {int(p) if str(p).isdigit() else p for p in self.allowed_patches}
+            allowed_names = {f"patch_{int(p):04d}" if str(p).isdigit() else str(p) for p in self.allowed_patches}
+        else:
+            indiv_dir = (
+                os.path.join(os.path.dirname(self.curated_dir), 'individual_fibers')
+                if os.path.basename(self.curated_dir) == 'patches'
+                else os.path.join(self.curated_dir, 'individual_fibers')
+            )
+            if os.path.exists(indiv_dir):
+                extracted = set(
+                    f.split('_fiber_')[0]
+                    for f in os.listdir(indiv_dir)
+                    if '_fiber_' in f and f.endswith('_vol.npy')
+                )
+                if extracted:
+                    allowed_names = extracted
+                    allowed_set = {
+                        int(p.split('_')[1])
+                        for p in extracted
+                        if '_' in p and p.split('_')[1].isdigit()
+                    }
+
         print(f"Building real fiber library from '{self.curated_dir}'...", flush=True)
         self.fibers = []
+
+        if not os.path.exists(self.curated_dir):
+            return
 
         meta_files = sorted([f for f in os.listdir(self.curated_dir) if f.startswith('patch_') and f.endswith('_meta.json')])
         for mf in meta_files:
             p_idx = int(mf.split('_')[1].split('.')[0])
+            p_name = f"patch_{p_idx:04d}"
+
+            # Only extract fibers from allowed/extracted donor patches
+            if allowed_set is not None or allowed_names is not None:
+                is_allowed = (allowed_set is not None and p_idx in allowed_set) or (allowed_names is not None and p_name in allowed_names)
+                if not is_allowed:
+                    continue
+
             m_path = os.path.join(self.curated_dir, mf)
             inst_path = os.path.join(self.curated_dir, f"patch_{p_idx:04d}_instance.npy")
             skel_path = os.path.join(self.curated_dir, f"patch_{p_idx:04d}_centerline.npy")

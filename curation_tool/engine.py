@@ -1037,6 +1037,18 @@ class RealDataCurationEngine:
             'prefix': prefix
         }
 
+    def extract_individual_fibers_for_patch(self, patch_index, indiv_dir=None, padding=2):
+        """Extracts individual fiber stamps for a specific patch into the individual fibers folder."""
+        from scripts.extract_individual_fibers import extract_fibers_from_patch
+        out_dir = indiv_dir or os.path.join(os.path.dirname(self.curated_output_dir), 'individual_fibers')
+        return extract_fibers_from_patch(
+            f"patch_{patch_index:04d}",
+            curated_dir=self.curated_output_dir,
+            indiv_dir=out_dir,
+            padding=padding,
+            verbose=True
+        )
+
     # ==========================================================================
     # Fast PIL PNG Base64 Image Generation (Thread-Safe & Instantaneous)
     # ==========================================================================

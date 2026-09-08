@@ -9,23 +9,18 @@ A complete deep learning and geometric graph optimization framework for high-res
 Run the full pipeline out-of-the-box with default auto-discovery and sensible hyperparameters:
 
 ```bash
-# 1. Place raw synthetic models into raw_data/ & precompute datasets (default 10% test split):
 # 1. Place raw synthetic models into data/synthetic/raw/ & precompute datasets:
 python prepare_datasets.py
 
-# 2. Start Interactive 3D Fiber Curator (Annotate initial patches or fix/crop segmented instances)
 # 2. Start Interactive 3D Fiber Curator (Annotate initial patches from data/fibers_to_segment/)
 python curation_tool/app.py
 
-# 3. Train Specialist Models (On-the-fly biological spline morphing, 50 epochs, 25% real patch stamping)
 # 3. Train Specialist Models (On-the-fly biological spline morphing, 50 epochs)
 python training/train_both.py
 
-# 4. Sliding-Window Neural Inference (Auto-grabs first volume in process_data/, saves to outputs/fiber_*.npy)
 # 4. Sliding-Window Neural Inference (Auto-grabs volume in data/fibers_to_segment/, outputs to outputs/)
 python inference/run_inference.py
 
-# 5. Global Topology Optimization (Direct degree-1 matching, 32px border severing, min-fiber-length 5)
 # 5. Global Topology Optimization (Direct degree-1 matching, 32px border severing)
 python inference/run_topology_optimization.py
 
@@ -154,6 +149,34 @@ Open **[http://127.0.0.1:5000](http://127.0.0.1:5000)** in your web browser:
 5. **Fix wiring**: Select a fiber ID, adjust or add/delete waypoints, split false mergers, or reconnect broken fibers.
 6. Press **`Space`** to re-resolve geodesic continuous paths and inspect updated 3D centerlines.
 7. Press **`Enter`** to save the curated 96³ patch directly into `data/curated/patches/`.
+
+---
+
+### 2b. Selectively Extract Donor Fibers for Stamping & Morphing
+All curated patches in `data/curated/patches/` are automatically used as **full 3D training volumes** (in `real_pool` and `volume_paths`). 
+
+If some real patches contain unusual fibers (e.g. very large/abnormal fibers) that should not be stamped into synthetic patches or morphed onto splines, you can selectively extract individual fibers only from the patches you designate as clean donors:
+
+```bash
+# Check extraction status of all curated patches:
+python scripts/extract_individual_fibers.py --list
+
+# Extract individual fiber stamps from a specific patch:
+python scripts/extract_individual_fibers.py --patch patch_0001
+python scripts/extract_individual_fibers.py --patch 1
+
+# Extract individual fibers from multiple patches:
+python scripts/extract_individual_fibers.py --patches 1 2 3
+
+# Remove extracted fibers for a patch (retains full volume for training):
+python scripts/extract_individual_fibers.py --remove patch_0004
+
+# Clear all extracted individual fibers:
+python scripts/extract_individual_fibers.py --clear
+```
+
+- Individual single-fiber stamps are saved to `data/curated/individual_fibers/`.
+- The morphing spline library (`data/curated/fiber_library.pkl`) is automatically synchronized to reflect only the extracted donor patches.
 
 ---
 
@@ -523,6 +546,7 @@ fiber_resolution_pipeline/
 │   └── run_topology_optimization.py    # Standalone CLI for running topology optimizer
 │
 └── scripts/
+    ├── extract_individual_fibers.py    # Selective individual fiber extraction & library synchronization
     └── recompute_morphed_examples.py   # Demonstration generation script
 ```
 
