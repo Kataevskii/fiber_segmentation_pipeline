@@ -14,9 +14,9 @@ def test_curation_engine():
     with tempfile.TemporaryDirectory() as tmp_curated_dir:
         print(f"Temporary test sandbox initialized at: {tmp_curated_dir}")
 
-        raw_vol_path = 'process_data/COLLAGENCROP_003_0000.tif'
+        raw_vol_path = 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif'
         if not os.path.exists(raw_vol_path):
-            raw_vol_path = 'process_data/CROP_003_0000.tif'
+            raw_vol_path = 'data/fibers_to_segment/CROP_003_0000.tif'
 
         engine = RealDataCurationEngine(
             raw_volume_path=raw_vol_path,
@@ -96,7 +96,9 @@ def test_curation_engine():
         print(f"Reloaded Patch #{save_res['saved_index']} verified successfully")
 
         # 6. Test opening segmented instance TIFF (if present)
-        seg_candidate = 'outputs/topology_resolved_morpho/instance_volume.tif'
+        seg_candidate = 'outputs/instance_volume.tif'
+        if not os.path.exists(seg_candidate):
+            seg_candidate = 'outputs/fiber_resolution_final/instance_volume.tif'
         if os.path.exists(seg_candidate):
             print(f"\n--- [6/7] Testing Segmented Instance TIFF Opening ({seg_candidate}) ---")
             open_res = engine.open_volume_file(seg_candidate, z=100, y=100, x=100)

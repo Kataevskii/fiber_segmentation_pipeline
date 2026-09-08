@@ -45,7 +45,7 @@ from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad,
 from topology_optimizer.visualize_results import save_fiber_length_histogram, export_uint16_tiff
 
 
-def get_default_volume(target_dir='process_data'):
+def get_default_volume(target_dir='data/fibers_to_segment'):
     """Finds and returns the first .tif, .tiff, or .npy volume file in the specified directory."""
     if os.path.isdir(target_dir):
         valid_exts = ('.tif', '.tiff', '.npy')
@@ -58,29 +58,14 @@ def get_default_volume(target_dir='process_data'):
         ]
         if files:
             return files[0]
-    return 'process_data/COLLAGENCROP_003_0000.tif'
+    return 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif'
 
 
-def get_default_intensity(target_dir='process_data', volume_path=None):
-    """Finds default intensity file from process_data folder first, falling back to outputs."""
+def get_default_intensity(target_dir='outputs', volume_path=None):
+    """Finds default intensity file from outputs folder first, falling back to data/fibers_to_segment."""
     stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
 
-    # 1. Search in process_data folder
-    if os.path.isdir(target_dir):
-        if stem:
-            for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join(target_dir, f"{stem}_intensity{ext}").replace('\\', '/')
-                if os.path.exists(p):
-                    return p
-        for name in ['fiber_intensity.npy', 'intensity.npy']:
-            p = os.path.join(target_dir, name).replace('\\', '/')
-            if os.path.exists(p):
-                return p
-        for f in sorted(os.listdir(target_dir)):
-            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
-                return os.path.join(target_dir, f).replace('\\', '/')
-
-    # 2. Search in outputs folder
+    # 1. Search in outputs folder
     if os.path.isdir('outputs'):
         if stem:
             for ext in ('.npy', '.tif', '.tiff'):
@@ -95,29 +80,29 @@ def get_default_intensity(target_dir='process_data', volume_path=None):
             if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
                 return os.path.join('outputs', f).replace('\\', '/')
 
-    return os.path.join(target_dir, 'fiber_intensity.npy').replace('\\', '/')
-
-
-def get_default_orientation(target_dir='process_data', volume_path=None):
-    """Finds default orientation file from process_data folder first, falling back to outputs."""
-    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
-
-    # 1. Search in process_data folder
+    # 2. Search in target_dir / data/fibers_to_segment folder
     if os.path.isdir(target_dir):
         if stem:
             for ext in ('.npy', '.tif', '.tiff'):
-                p = os.path.join(target_dir, f"{stem}_orientation{ext}").replace('\\', '/')
+                p = os.path.join(target_dir, f"{stem}_intensity{ext}").replace('\\', '/')
                 if os.path.exists(p):
                     return p
-        for name in ['fiber_orientation.npy', 'orientation.npy']:
+        for name in ['fiber_intensity.npy', 'intensity.npy']:
             p = os.path.join(target_dir, name).replace('\\', '/')
             if os.path.exists(p):
                 return p
         for f in sorted(os.listdir(target_dir)):
-            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+            if 'intensity' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
                 return os.path.join(target_dir, f).replace('\\', '/')
 
-    # 2. Search in outputs folder
+    return 'outputs/fiber_intensity.npy'
+
+
+def get_default_orientation(target_dir='outputs', volume_path=None):
+    """Finds default orientation file from outputs folder first, falling back to data/fibers_to_segment."""
+    stem = os.path.splitext(os.path.basename(volume_path))[0] if volume_path else ''
+
+    # 1. Search in outputs folder
     if os.path.isdir('outputs'):
         if stem:
             for ext in ('.npy', '.tif', '.tiff'):
@@ -132,7 +117,22 @@ def get_default_orientation(target_dir='process_data', volume_path=None):
             if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
                 return os.path.join('outputs', f).replace('\\', '/')
 
-    return os.path.join(target_dir, 'fiber_orientation.npy').replace('\\', '/')
+    # 2. Search in target_dir / data/fibers_to_segment folder
+    if os.path.isdir(target_dir):
+        if stem:
+            for ext in ('.npy', '.tif', '.tiff'):
+                p = os.path.join(target_dir, f"{stem}_orientation{ext}").replace('\\', '/')
+                if os.path.exists(p):
+                    return p
+        for name in ['fiber_orientation.npy', 'orientation.npy']:
+            p = os.path.join(target_dir, name).replace('\\', '/')
+            if os.path.exists(p):
+                return p
+        for f in sorted(os.listdir(target_dir)):
+            if 'orientation' in f.lower() and f.lower().endswith(('.npy', '.tif', '.tiff')):
+                return os.path.join(target_dir, f).replace('\\', '/')
+
+    return 'outputs/fiber_orientation.npy'
 
 
 def load_volume_array(path: str, mmap_mode: str = 'r'):
@@ -892,13 +892,13 @@ def run_topology_optimization(
     verbose: bool = True,
 ):
     if volume_path is None or not os.path.exists(volume_path):
-        volume_path = get_default_volume('process_data')
+        volume_path = get_default_volume('data/fibers_to_segment')
 
     if intensity_path is None or not os.path.exists(intensity_path):
-        intensity_path = get_default_intensity('process_data', volume_path=volume_path)
+        intensity_path = get_default_intensity('outputs', volume_path=volume_path)
 
     if orientation_path is None or not os.path.exists(orientation_path):
-        orientation_path = get_default_orientation('process_data', volume_path=volume_path)
+        orientation_path = get_default_orientation('outputs', volume_path=volume_path)
 
     if mode.lower() in ('chunked', 'chunks', 'tile', 'tiled'):
         return run_chunked_topology_optimization(
@@ -926,9 +926,9 @@ def run_topology_optimization(
 
 
 if __name__ == '__main__':
-    default_vol = get_default_volume('process_data')
-    default_int = get_default_intensity('process_data', volume_path=default_vol)
-    default_ori = get_default_orientation('process_data', volume_path=default_vol)
+    default_vol = get_default_volume('data/fibers_to_segment')
+    default_int = get_default_intensity('outputs', volume_path=default_vol)
+    default_ori = get_default_orientation('outputs', volume_path=default_vol)
 
     parser = argparse.ArgumentParser(description="Global Fiber Topology Optimization Runner")
     parser.add_argument('--volume', type=str, default=default_vol,

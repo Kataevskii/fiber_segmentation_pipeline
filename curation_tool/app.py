@@ -8,10 +8,14 @@ from curation_tool.engine import RealDataCurationEngine
 
 app = Flask(__name__)
 
-_default_raw = 'process_data/COLLAGENCROP_003_0000.tif' if os.path.exists('process_data/COLLAGENCROP_003_0000.tif') else 'process_data/CROP_003_0000.tif'
+_default_raw = 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif' if os.path.exists('data/fibers_to_segment/COLLAGENCROP_003_0000.tif') else (
+    sorted([os.path.join('data/fibers_to_segment', f).replace('\\', '/') for f in os.listdir('data/fibers_to_segment') if f.lower().endswith(('.tif', '.tiff', '.npy'))])[0]
+    if os.path.isdir('data/fibers_to_segment') and any(f.lower().endswith(('.tif', '.tiff', '.npy')) for f in os.listdir('data/fibers_to_segment'))
+    else None
+)
 engine = RealDataCurationEngine(
     raw_volume_path=_default_raw,
-    curated_output_dir='real_train_data/curated_patches',
+    curated_output_dir='data/curated/patches',
     cube_size=96
 )
 
@@ -1283,7 +1287,7 @@ HTML_TEMPLATE = r"""
 
                 <div class="modal-section" id="modal-raw-pairing-section">
                     <label class="modal-label">🔬 Optional Raw Volume (for intensity/density):</label>
-                    <input type="text" id="modal-raw-path" class="modal-text-input" placeholder="e.g. process_data/COLLAGENCROP_003_0000.tif (optional)">
+                    <input type="text" id="modal-raw-path" class="modal-text-input" placeholder="e.g. data/fibers_to_segment/COLLAGENCROP_003_0000.tif (optional)">
                 </div>
 
                 <div class="modal-section">
@@ -3136,7 +3140,7 @@ def api_upload_volume():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
-    upload_dir = os.path.join('process_data', 'uploaded_volumes')
+    upload_dir = os.path.join('data', 'fibers_to_segment', 'uploaded_volumes')
     os.makedirs(upload_dir, exist_ok=True)
     save_path = os.path.join(upload_dir, file.filename).replace('\\', '/')
     file.save(save_path)

@@ -7,10 +7,10 @@ from scipy.spatial import cKDTree
 from scipy.ndimage import median_filter
 
 def compute_analytical_orientation_from_gad(
-    gad_path='raw_data/AJ_model_1.gad',
-    tif_path='raw_data/AJ_model_1.tif',
-    out_vector_path='augmented_data/model_1_base_ori.npy',
-    out_intensity_path='augmented_data/model_1_base_intensity.tif',
+    gad_path='data/synthetic/raw/AJ_model_1.gad',
+    tif_path='data/synthetic/raw/AJ_model_1.tif',
+    out_vector_path='data/synthetic/precomputed/train/model_1_base_ori.npy',
+    out_intensity_path='data/synthetic/precomputed/train/model_1_base_intensity.tif',
     sigma=1.0
 ):
     """
@@ -161,10 +161,10 @@ def compute_analytical_orientation_from_gad(
 
 
 def create_robust_augmented_training_data(
-    gad_path='raw_data/AJ_model_1.gad',
-    out_tif_path='augmented_data/model_1_aug_vol.tif',
-    out_ori_path='augmented_data/model_1_aug_ori.npy',
-    out_centerline_path='augmented_data/model_1_aug_centerline.tif',
+    gad_path='data/synthetic/raw/AJ_model_1.gad',
+    out_tif_path='data/synthetic/precomputed/train/model_1_aug_vol.tif',
+    out_ori_path='data/synthetic/precomputed/train/model_1_aug_ori.npy',
+    out_centerline_path='data/synthetic/precomputed/train/model_1_aug_centerline.tif',
     max_shift=2.0,
     median_radius=1
 ):

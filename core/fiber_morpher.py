@@ -106,7 +106,7 @@ class RealFiberInstance:
 
 class RealFiberLibrary:
     """Library of extracted continuous real fibers from curated patches."""
-    def __init__(self, curated_dir='real_train_data/curated_patches', cache_path='real_train_data/fiber_library.pkl', min_length=75):
+    def __init__(self, curated_dir='data/curated/patches', cache_path='data/curated/fiber_library.pkl', min_length=75):
         self.curated_dir = curated_dir
         self.cache_path = cache_path
         self.min_length = min_length

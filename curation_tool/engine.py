@@ -26,10 +26,18 @@ class RealDataCurationEngine:
     """
     def __init__(
         self,
-        raw_volume_path='process_data/COLLAGENCROP_003_0000.tif',
-        curated_output_dir='real_train_data/curated_patches',
+        raw_volume_path='data/fibers_to_segment/COLLAGENCROP_003_0000.tif',
+        curated_output_dir='data/curated/patches',
         cube_size=96
     ):
+        if raw_volume_path and not os.path.exists(raw_volume_path) and os.path.isdir('data/fibers_to_segment'):
+            cands = [
+                os.path.join('data/fibers_to_segment', f).replace('\\', '/')
+                for f in sorted(os.listdir('data/fibers_to_segment'))
+                if f.lower().endswith(('.tif', '.tiff', '.npy'))
+            ]
+            if cands:
+                raw_volume_path = cands[0]
         self.raw_volume_path = raw_volume_path.replace('\\', '/') if raw_volume_path else None
         self.instance_volume_path = None
         self.curated_output_dir = curated_output_dir
@@ -357,7 +365,7 @@ class RealDataCurationEngine:
         segmented_files = []
         raw_files = []
 
-        candidate_dirs = ['outputs', 'process_data', 'raw_data', 'augmented_data', 'real_train_data', 'test_data', 'val_data']
+        candidate_dirs = ['data/fibers_to_segment', 'outputs', 'data/curated/patches']
         for cdir in candidate_dirs:
             if not os.path.exists(cdir): continue
             for ext in ('*.tif', '*.tiff', '*.npy'):

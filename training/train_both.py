@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--pretrained', action='store_true', help="Warm-start from standard checkpoints/best_*.pth")
     parser.add_argument('--pretrained-intensity', type=str, default=None, help="Custom pretrained intensity checkpoint path")
     parser.add_argument('--pretrained-orientation', type=str, default=None, help="Custom pretrained orientation checkpoint path")
-    parser.add_argument('--real-data-dir', type=str, default='real_train_data', help="Directory containing curated real fibers for real stamping")
+    parser.add_argument('--real-data-dir', type=str, default='data/curated', help="Directory containing curated real fibers for real stamping")
     parser.add_argument('--real-stamp-prob', type=float, default=0.25, help="Probability of stamping real fibers into synthetic training patches")
     parser.add_argument('--real-only', action='store_true', help="Train exclusively on real curated patches (no synthetic data)")
     parser.add_argument('--morph-on-the-fly', action='store_true', default=True, help="Augment GAD splines and morph real biological fibers on-the-fly (default: True)")
@@ -30,7 +30,8 @@ def main():
                         help="Which model(s) to train (default: both)")
     args = parser.parse_args()
 
-    ensure_individual_fibers_extracted('real_train_data', verbose=True)
+    os.makedirs('checkpoints', exist_ok=True)
+    ensure_individual_fibers_extracted(args.real_data_dir, verbose=True)
 
     int_pretrained = args.pretrained_intensity or ('checkpoints/best_intensity_unet.pth' if args.pretrained else None)
     ori_pretrained = args.pretrained_orientation or ('checkpoints/best_orientation_unet.pth' if args.pretrained else None)

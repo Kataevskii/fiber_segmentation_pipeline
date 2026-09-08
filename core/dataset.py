@@ -7,17 +7,21 @@ from torch.utils.data import Dataset
 import tifffile
 from scipy.spatial import cKDTree
 
-def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=2, verbose=True):
+def ensure_individual_fibers_extracted(real_data_dir='data/curated', padding=2, verbose=True):
     """
-    Scans real curated training patch blocks (e.g. in real_train_data/curated_patches/)
+    Scans real curated training patch blocks (e.g. in data/curated/patches/)
     and extracts all individual single-fiber sub-volume stamps into
-    real_train_data/individual_fibers/ if missing or incomplete.
+    data/curated/individual_fibers/ if missing or incomplete.
     """
     if not real_data_dir or not os.path.exists(real_data_dir):
         return 0
 
-    curated_dir = os.path.join(real_data_dir, 'curated_patches')
-    indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
+    if os.path.basename(real_data_dir) == 'patches':
+        curated_dir = real_data_dir
+        indiv_dir = os.path.join(os.path.dirname(real_data_dir), 'individual_fibers')
+    else:
+        curated_dir = os.path.join(real_data_dir, 'patches')
+        indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
 
     if not os.path.exists(curated_dir):
         return 0
@@ -338,7 +342,7 @@ class Fiber3DPatchDataset(Dataset):
     """
     def __init__(
         self,
-        data_dir='augmented_data',
+        data_dir='data/synthetic/precomputed/train',
         volume_paths=None,
         intensity_paths=None,
         orientation_paths=None,
@@ -347,7 +351,7 @@ class Fiber3DPatchDataset(Dataset):
         augment=True,
         fg_prob=0.85,
         jitter_voxels=2,
-        real_data_dir='real_train_data',
+        real_data_dir='data/curated',
         real_stamp_prob=0.25,
         verbose=False
     ):
@@ -614,7 +618,7 @@ class Fiber3DPatchDataset(Dataset):
 
 class GADSplineBank:
     """Fast in-memory cache of synthetic GAD spline centerlines for dynamic patch cropping."""
-    def __init__(self, raw_dir='raw_data'):
+    def __init__(self, raw_dir='data/synthetic/raw'):
         self.models = []
         if not os.path.exists(raw_dir):
             return
@@ -691,8 +695,8 @@ class OnTheFlyMorphedDataset(Dataset):
     """
     def __init__(
         self,
-        raw_dir='raw_data',
-        real_data_dir='real_train_data/curated_patches',
+        raw_dir='data/synthetic/raw',
+        real_data_dir='data/curated/patches',
         patch_size=64,
         parent_block_size=96,
         pool_size=10,
@@ -701,7 +705,7 @@ class OnTheFlyMorphedDataset(Dataset):
         jitter_std=2.5,
         wobble_amplitude=1.2,
         real_patch_prob=0.30,
-        cache_library_path='real_train_data/fiber_library.pkl'
+        cache_library_path='data/curated/fiber_library.pkl'
     ):
         super().__init__()
         self.patch_size = patch_size

@@ -127,16 +127,16 @@ def recompute_all_morphed_examples():
     # 1. Initialize Real Fiber Library with strict intact through-volume filter
     print("\n[Step 1/5] Loading Real Biological Fiber Library (Intact Through-Volume Only)...", flush=True)
     library = RealFiberLibrary(
-        curated_dir='real_train_data/curated_patches',
-        cache_path='real_train_data/fiber_library.pkl',
+        curated_dir='data/curated/patches',
+        cache_path='data/curated/fiber_library.pkl',
         min_length=75
     )
     intact_count = sum(1 for f in library.fibers if f.is_boundary_continuous)
     print(f"Library loaded with {len(library.fibers)} fibers ({intact_count} verified intact donor fibers).", flush=True)
 
-    gad_1 = 'raw_data/AJ_model_1.gad'
-    gad_2 = 'raw_data/AJ_model_2.gad'
-    gad_3 = 'raw_data/AJ_model_3.gad'
+    gad_1 = 'data/synthetic/raw/AJ_model_1.gad'
+    gad_2 = 'data/synthetic/raw/AJ_model_2.gad'
+    gad_3 = 'data/synthetic/raw/AJ_model_3.gad'
 
     # -------------------------------------------------------------------------
     # 2. Recompute 64³ Demo Files & morphing_comparison.png
@@ -216,7 +216,7 @@ def recompute_all_morphed_examples():
     ]
     gallery_crops = []
     for k, orig in enumerate(crop_origins, 1):
-        gad_src = gad_1 if os.path.exists(gad_1) else 'raw_data/AJ_model_1.gad'
+        gad_src = gad_1 if os.path.exists(gad_1) else 'data/synthetic/raw/AJ_model_1.gad'
         c_list = extract_gad_curves_in_box(gad_src, orig, box_size=64, min_length=25.0)
         if len(c_list) < 3 and os.path.exists(gad_2):
             c_list = extract_gad_curves_in_box(gad_2, orig, box_size=64, min_length=25.0)
@@ -253,10 +253,10 @@ def recompute_all_morphed_examples():
     # -------------------------------------------------------------------------
     print("\n[Step 4/5] Recomputing 96³ Samples & 96³ Multi-Block Gallery...", flush=True)
     block_configs = [
-        ('raw_data/AJ_model_1.gad', (100, 120, 110), 'sample_1'),
-        ('raw_data/AJ_model_2.gad' if os.path.exists('raw_data/AJ_model_2.gad') else gad_1, (160, 180, 150), 'sample_2'),
-        ('raw_data/AJ_model_3.gad' if os.path.exists('raw_data/AJ_model_3.gad') else gad_1, (220, 200, 240), 'sample_3'),
-        ('raw_data/AJ_model_1.gad', (180, 280, 200), 'sample_4_aux')
+        ('data/synthetic/raw/AJ_model_1.gad', (100, 120, 110), 'sample_1'),
+        ('data/synthetic/raw/AJ_model_2.gad' if os.path.exists('data/synthetic/raw/AJ_model_2.gad') else gad_1, (160, 180, 150), 'sample_2'),
+        ('data/synthetic/raw/AJ_model_3.gad' if os.path.exists('data/synthetic/raw/AJ_model_3.gad') else gad_1, (220, 200, 240), 'sample_3'),
+        ('data/synthetic/raw/AJ_model_1.gad', (180, 280, 200), 'sample_4_aux')
     ]
 
     blocks_data_96 = []
@@ -357,8 +357,8 @@ def recompute_all_morphed_examples():
     # 5. Recompute Full Model 1 Overview & Slice Visualizations
     # -------------------------------------------------------------------------
     print("\n[Step 5/5] Recomputing Model 1 Morphed Full-Scale Overview & Slices...", flush=True)
-    m1_vol_path = 'augmented_data/model_1_morphed_vol.npy'
-    m1_int_path = 'augmented_data/model_1_morphed_intensity.npy'
+    m1_vol_path = 'data/synthetic/precomputed/train/model_1_morphed_vol.npy'
+    m1_int_path = 'data/synthetic/precomputed/train/model_1_morphed_intensity.npy'
 
     if os.path.exists(m1_vol_path) and os.path.exists(m1_int_path):
         m1_vol = np.load(m1_vol_path, mmap_mode='r')
@@ -417,7 +417,7 @@ def recompute_all_morphed_examples():
         plt.close()
         print("  -> model_1_morphed_slices.png")
     else:
-        print("  Warning: Model 1 full volume files not found in augmented_data/, skipping model_1 figures.")
+        print("  Warning: Model 1 full volume files not found in data/synthetic/precomputed/train/, skipping model_1 figures.")
 
     print("\n" + "=" * 80)
     print(" ALL MORPHED FIBER EXAMPLES AND FIGURES RECOMPUTED SUCCESSFULLY!")

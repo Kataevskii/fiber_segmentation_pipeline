@@ -76,13 +76,13 @@ def _evaluate_full_volume_angle(model, loss_fn, volume_paths, intensity_paths, o
     return val_loss_sum / count, val_angle_sum / count
 
 def train_orientation_model(
-    data_dir=['augmented_data'],
-    real_train_dir='real_train_data/curated_patches',
-    real_val_dir='real_train_data/curated_patches',
+    data_dir=['data/synthetic/precomputed/train'],
+    real_train_dir='data/curated/patches',
+    real_val_dir='data/curated/patches',
     real_data_dir=None,
     real_stamp_prob=0.25,
     real_repeat=3,
-    test_dir='test_data',
+    test_dir='data/synthetic/precomputed/test',
     train_on_all_data=False,
     real_only=False,
     morph_on_the_fly=True,
@@ -135,7 +135,7 @@ def train_orientation_model(
 
     if morph_on_the_fly:
         train_dataset = OnTheFlyMorphedDataset(
-            raw_dir='raw_data',
+            raw_dir='data/synthetic/raw',
             real_data_dir=real_train_dir if os.path.exists(real_train_dir) else None,
             patch_size=patch_size,
             samples_per_epoch=samples_per_epoch,

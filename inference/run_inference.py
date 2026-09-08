@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from core.models import IntensityUNet3D, OrientationUNet3D, infer_base_channels_from_checkpoint
 
 
-def get_default_input_volume(target_dir='process_data'):
+def get_default_input_volume(target_dir='data/fibers_to_segment'):
     """Finds and returns the first .tif, .tiff, or .npy file in the specified directory."""
     if os.path.isdir(target_dir):
         valid_exts = ('.tif', '.tiff', '.npy')
@@ -41,7 +41,7 @@ def get_default_input_volume(target_dir='process_data'):
         ]
         if files:
             return files[0]
-    return 'process_data/COLLAGENCROP_003_0000.tif'
+    return 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif'
 
 
 def predict_sliding_window(
