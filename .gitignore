@@ -1,10 +1,30 @@
 **/__pycache__
-/augmented_data/*
+*.pyc
+
+# 3-Bucket Data Hierarchy (track directory structure via .gitkeep, ignore binary payloads)
+/data/synthetic/raw/*
+!/data/synthetic/raw/.gitkeep
+/data/synthetic/precomputed/train/*
+!/data/synthetic/precomputed/train/.gitkeep
+/data/synthetic/precomputed/test/*
+!/data/synthetic/precomputed/test/.gitkeep
+/data/fibers_to_segment/*
+!/data/fibers_to_segment/.gitkeep
+/data/curated/patches/*
+!/data/curated/patches/.gitkeep
+/data/curated/individual_fibers/*
+!/data/curated/individual_fibers/.gitkeep
+/data/curated/*.pkl
+
+# Checkpoints
 /checkpoints/*
+!/checkpoints/.gitkeep
+
+# Outputs
 /outputs/*
-/process_data/*
-/raw_data/*
-/real_train_data/*
-/test_data/*
-/val_data/*
-!**.gitkeep
+!/outputs/.gitkeep
+
+# Temporary / Scratch files
+/scratch_test_*
+*.tmp
+*.dat

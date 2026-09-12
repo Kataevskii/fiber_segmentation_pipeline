@@ -7,30 +7,54 @@ from torch.utils.data import Dataset
 import tifffile
 from scipy.spatial import cKDTree
 
-def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=2, verbose=True):
+def ensure_individual_fibers_extracted(real_data_dir='data/curated', padding=2, auto_extract=False, target_patches=None, verbose=True):
     """
-    Scans real curated training patch blocks (e.g. in real_train_data/curated_patches/)
-    and extracts all individual single-fiber sub-volume stamps into
-    real_train_data/individual_fibers/ if missing or incomplete.
+    Checks the status of extracted individual single-fiber sub-volume stamps in
+    data/curated/individual_fibers/.
+
+    By default, auto_extract is False to avoid mass-exporting fibers from all patches,
+    allowing users to selectively extract fibers using scripts/extract_individual_fibers.py.
     """
     if not real_data_dir or not os.path.exists(real_data_dir):
         return 0
 
-    curated_dir = os.path.join(real_data_dir, 'curated_patches')
-    indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
-
-    if not os.path.exists(curated_dir):
-        return 0
+    if os.path.basename(real_data_dir) == 'patches':
+        curated_dir = real_data_dir
+        indiv_dir = os.path.join(os.path.dirname(real_data_dir), 'individual_fibers')
+    else:
+        curated_dir = os.path.join(real_data_dir, 'patches')
+        indiv_dir = os.path.join(real_data_dir, 'individual_fibers')
 
     os.makedirs(indiv_dir, exist_ok=True)
+    existing_stamps = [f for f in os.listdir(indiv_dir) if f.endswith('_vol.npy') and '_fiber_' in f]
+    total_stamps = len(existing_stamps)
+
+    if not auto_extract and target_patches is None:
+        if verbose:
+            if total_stamps > 0:
+                print(f"Curated individual fibers inventory: {total_stamps} stamps available in '{indiv_dir}'.", flush=True)
+            else:
+                print(f"Notice: No individual fiber stamps found in '{indiv_dir}'. To extract donor fibers from specific patches, run:\n  python scripts/extract_individual_fibers.py --patch <patch_name>", flush=True)
+        return total_stamps
+
+    if not os.path.exists(curated_dir):
+        return total_stamps
+
     patch_vols = sorted([
         os.path.join(curated_dir, f)
         for f in os.listdir(curated_dir)
         if f.endswith('_vol.npy')
     ])
 
+    if target_patches is not None:
+        target_set = {str(p).strip() for p in target_patches}
+        patch_vols = [
+            pv for pv in patch_vols
+            if os.path.basename(pv).replace('_vol.npy', '') in target_set
+            or any(t in os.path.basename(pv) for t in target_set)
+        ]
+
     newly_extracted = 0
-    total_stamps = 0
 
     for p_vol_path in patch_vols:
         p_name = os.path.basename(p_vol_path).replace('_vol.npy', '')
@@ -43,7 +67,6 @@ def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=
 
         inst = np.load(p_inst_path)
         unique_ids = np.unique(inst[inst > 0])
-        total_stamps += len(unique_ids)
 
         missing_fibers = []
         for fib_id in unique_ids:
@@ -85,8 +108,9 @@ def ensure_individual_fibers_extracted(real_data_dir='real_train_data', padding=
             newly_extracted += 1
 
     if newly_extracted > 0 and verbose:
-        print(f"Auto-extracted {newly_extracted} new individual fiber stamps from curated patch blocks into '{indiv_dir}'.", flush=True)
+        print(f"Extracted {newly_extracted} new individual fiber stamps from curated patch blocks into '{indiv_dir}'.", flush=True)
 
+    total_stamps = len([f for f in os.listdir(indiv_dir) if f.endswith('_vol.npy') and '_fiber_' in f])
     return total_stamps
 
 
@@ -338,7 +362,7 @@ class Fiber3DPatchDataset(Dataset):
     """
     def __init__(
         self,
-        data_dir='augmented_data',
+        data_dir='data/synthetic/precomputed/train',
         volume_paths=None,
         intensity_paths=None,
         orientation_paths=None,
@@ -347,7 +371,7 @@ class Fiber3DPatchDataset(Dataset):
         augment=True,
         fg_prob=0.85,
         jitter_voxels=2,
-        real_data_dir='real_train_data',
+        real_data_dir='data/curated',
         real_stamp_prob=0.25,
         verbose=False
     ):
@@ -614,7 +638,7 @@ class Fiber3DPatchDataset(Dataset):
 
 class GADSplineBank:
     """Fast in-memory cache of synthetic GAD spline centerlines for dynamic patch cropping."""
-    def __init__(self, raw_dir='raw_data'):
+    def __init__(self, raw_dir='data/synthetic/raw'):
         self.models = []
         if not os.path.exists(raw_dir):
             return
@@ -691,8 +715,8 @@ class OnTheFlyMorphedDataset(Dataset):
     """
     def __init__(
         self,
-        raw_dir='raw_data',
-        real_data_dir='real_train_data/curated_patches',
+        raw_dir='data/synthetic/raw',
+        real_data_dir='data/curated/patches',
         patch_size=64,
         parent_block_size=96,
         pool_size=10,
@@ -701,7 +725,7 @@ class OnTheFlyMorphedDataset(Dataset):
         jitter_std=2.5,
         wobble_amplitude=1.2,
         real_patch_prob=0.30,
-        cache_library_path='real_train_data/fiber_library.pkl'
+        cache_library_path='data/curated/fiber_library.pkl'
     ):
         super().__init__()
         self.patch_size = patch_size

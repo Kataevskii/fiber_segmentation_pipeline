@@ -13,11 +13,12 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
 
 
-def find_raw_models(raw_dir='raw_data'):
+def find_raw_models(raw_dir='data/synthetic/raw'):
     """
     Finds all matching pairs of (.tif / .tiff, .gad) in raw_dir.
     Returns sorted list of model dictionaries.
     """
+    os.makedirs(raw_dir, exist_ok=True)
     if not os.path.exists(raw_dir):
         return []
 
@@ -78,17 +79,17 @@ def process_model(model_info, out_dir, overwrite=False):
 
 
 def prepare_all_datasets(
-    raw_dir: str = 'raw_data',
-    train_dir: str = 'augmented_data',
-    test_dir: str = 'test_data',
+    raw_dir: str = 'data/synthetic/raw',
+    train_dir: str = 'data/synthetic/precomputed/train',
+    test_dir: str = 'data/synthetic/precomputed/test',
     test_split: float = 0.10,
     overwrite: bool = False
 ):
     print("=" * 75, flush=True)
     print(" BATCH DATASET PRECOMPUTATION (MEMORY-MAPPED NPY FORMAT) ", flush=True)
-    print(f"  - Raw Data Directory: {raw_dir}/")
-    print(f"  - Training Target:     {train_dir}/")
-    print(f"  - Test Target:         {test_dir}/ (Default split: {test_split * 100:.0f}%)")
+    print(f"  - Raw Synthetic Directory: {raw_dir}/")
+    print(f"  - Training Target:          {train_dir}/")
+    print(f"  - Test Target:              {test_dir}/ (Default split: {test_split * 100:.0f}%)")
     print("=" * 75, flush=True)
 
     os.makedirs(train_dir, exist_ok=True)
@@ -128,9 +129,9 @@ def prepare_all_datasets(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Precompute Memory-Mapped Continuous Ground-Truth Fields")
-    parser.add_argument('--raw-dir', type=str, default='raw_data', help="Directory containing raw synthetic (.tif, .gad) models (default: raw_data)")
-    parser.add_argument('--train-dir', type=str, default='augmented_data', help="Output directory for training datasets (default: augmented_data)")
-    parser.add_argument('--test-dir', type=str, default='test_data', help="Output directory for test datasets (default: test_data)")
+    parser.add_argument('--raw-dir', type=str, default='data/synthetic/raw', help="Directory containing raw synthetic (.tif, .gad) models (default: data/synthetic/raw)")
+    parser.add_argument('--train-dir', type=str, default='data/synthetic/precomputed/train', help="Output directory for training datasets (default: data/synthetic/precomputed/train)")
+    parser.add_argument('--test-dir', type=str, default='data/synthetic/precomputed/test', help="Output directory for test datasets (default: data/synthetic/precomputed/test)")
     parser.add_argument('--test-split', type=float, default=0.10, help="Fraction of raw models to allocate for test set (default: 0.10 / 10%%)")
     parser.add_argument('--overwrite', action='store_true', help="Force recomputation even if .npy files already exist")
     args = parser.parse_args()
