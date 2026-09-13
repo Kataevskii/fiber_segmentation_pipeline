@@ -3,6 +3,7 @@ import json
 import time
 import base64
 import io
+import itertools
 import numpy as np
 import tifffile
 from PIL import Image
@@ -556,54 +557,123 @@ class RealDataCurationEngine:
             'point_cloud': point_cloud
         }
 
-    def _center_curve_to_mask(self, curve, mask, smoothing_sigma=2.5, resample_step=1.0):
+    def _center_curve_to_mask(self, curve, mask=None, smoothing_sigma=1.2, resample_step=1.0, max_radius=3.5, waypoints=None):
         """
-        Refines curve points so they lie exactly at the cross-sectional center of mass of the mask,
-        fits a continuous cubic B-spline along the arc length, and resamples with uniform step size
-        to eliminate all discrete voxel staircasing and jaggedness.
+        Refines curve points to lie at the local cross-sectional center of mass of the fiber,
+        and fits a continuous parametric cubic B-spline with strictly pinned endpoints and intermediate waypoints.
+        Combines true C^2 smoothness with exact endpoint and waypoint preservation at the user's seeds.
         """
         if len(curve) < 2:
             return curve.astype(np.float32)
 
-        mask_coords = np.argwhere(mask > 0).astype(np.float32)
-        if len(mask_coords) == 0:
-            return curve.astype(np.float32)
+        start_pt = curve[0].copy().astype(np.float32)
+        end_pt = curve[-1].copy().astype(np.float32)
+        wp_list = [np.array(wp, dtype=np.float32) for wp in waypoints] if waypoints else []
 
-        # 1. Project mask coordinates to find cross-sectional centroids
-        tree = cKDTree(curve)
-        _, indices = tree.query(mask_coords, k=1)
+        if len(curve) <= 3:
+            diffs = np.linalg.norm(np.diff(curve, axis=0), axis=1)
+            total_len = float(np.sum(diffs))
+            n_samples = max(3, int(np.round(total_len / resample_step)))
+            t_in = np.insert(np.cumsum(diffs), 0, 0.0)
+            t_out = np.linspace(0.0, total_len, n_samples)
+            res = np.empty((n_samples, 3), dtype=np.float32)
+            for d in range(3):
+                res[:, d] = np.interp(t_out, t_in, curve[:, d])
+            res[0] = start_pt
+            res[-1] = end_pt
+            for wp in wp_list:
+                wp_idx = int(np.argmin(np.linalg.norm(res - wp, axis=1)))
+                res[wp_idx] = wp
+            return res
 
         centered = curve.copy().astype(np.float32)
-        for k in range(len(curve)):
-            assigned = (indices == k)
-            if np.sum(assigned) >= 3:
-                centered[k] = mask_coords[assigned].mean(axis=0)
 
-        # 2. Gaussian smoothing on centered points
-        smoothed_pts = gaussian_filter1d(centered, sigma=smoothing_sigma, axis=0)
+        # Identify waypoint indices along curve to protect from centroid drift
+        wp_indices = []
+        for wp in wp_list:
+            dists = np.linalg.norm(curve - wp, axis=1)
+            wp_indices.append(int(np.argmin(dists)))
 
-        # 3. Parametric cubic B-spline arc-length resampling
-        diffs = np.linalg.norm(np.diff(smoothed_pts, axis=0), axis=1)
+        if mask is not None and len(curve) > 2:
+            mask_coords = np.argwhere(mask > 0).astype(np.float32)
+            if len(mask_coords) > 0:
+                tree = cKDTree(curve)
+                dists, indices = tree.query(mask_coords, k=1)
+                near_mask = (dists <= max_radius)
+                if np.any(near_mask):
+                    valid_coords = mask_coords[near_mask]
+                    valid_indices = indices[near_mask]
+
+                    for k in range(1, len(curve) - 1):
+                        if k in wp_indices:
+                            continue
+                        assigned = (valid_indices == k)
+                        if np.sum(assigned) >= 3:
+                            target_center = valid_coords[assigned].mean(axis=0)
+                            shift = target_center - centered[k]
+                            shift_len = np.linalg.norm(shift)
+                            if shift_len > 1.5:
+                                shift = shift * (1.5 / shift_len)
+                            centered[k] += shift
+
+        # Strictly pin endpoints and waypoints
+        centered[0] = start_pt
+        centered[-1] = end_pt
+        for idx, wp in zip(wp_indices, wp_list):
+            centered[idx] = wp
+
+        # Light Gaussian pre-filtering
+        smoothed = gaussian_filter1d(centered, sigma=smoothing_sigma, axis=0, mode='nearest')
+        smoothed[0] = start_pt
+        smoothed[-1] = end_pt
+        for idx, wp in zip(wp_indices, wp_list):
+            smoothed[idx] = wp
+
+        # Remove duplicate points for splprep
+        diffs = np.linalg.norm(np.diff(smoothed, axis=0), axis=1)
         keep_idx = np.insert(diffs > 1e-4, 0, True)
-        valid_pts = smoothed_pts[keep_idx]
+        valid_pts = smoothed[keep_idx]
 
         if len(valid_pts) < 4:
-            return smoothed_pts.astype(np.float32)
+            return smoothed.astype(np.float32)
 
+        # Parametric Cubic B-spline with pinned boundary and waypoint weights
         try:
-            tck, u = splprep([valid_pts[:, 0], valid_pts[:, 1], valid_pts[:, 2]], k=min(3, len(valid_pts)-1), s=len(valid_pts) * 0.5)
-            u_fine = np.linspace(0, 1, len(valid_pts) * 4)
-            z_fine, y_fine, x_fine = splev(u_fine, tck)
-            fine_pts = np.column_stack([z_fine, y_fine, x_fine])
+            chord_lens = np.insert(np.cumsum(np.linalg.norm(np.diff(valid_pts, axis=0), axis=1)), 0, 0.0)
+            total_len = chord_lens[-1]
+            u_norm = chord_lens / (total_len + 1e-8)
 
-            arc_lengths = np.insert(np.cumsum(np.linalg.norm(np.diff(fine_pts, axis=0), axis=1)), 0, 0.0)
-            total_len = arc_lengths[-1]
-            n_resampled = max(3, int(np.round(total_len / resample_step)))
-            u_uniform = np.linspace(0, 1, n_resampled)
-            z_u, y_u, x_u = splev(u_uniform, tck)
-            return np.column_stack([z_u, y_u, x_u]).astype(np.float32)
+            w = np.ones(len(valid_pts), dtype=np.float64)
+            w[0] = 500.0
+            w[-1] = 500.0
+            for wp in wp_list:
+                idx_v = int(np.argmin(np.linalg.norm(valid_pts - wp, axis=1)))
+                w[idx_v] = 500.0
+
+            k_deg = min(3, len(valid_pts) - 1)
+            s_val = len(valid_pts) * 0.25
+
+            tck, _ = splprep(
+                [valid_pts[:, 0], valid_pts[:, 1], valid_pts[:, 2]],
+                u=u_norm,
+                w=w,
+                k=k_deg,
+                s=s_val
+            )
+
+            n_samples = max(3, int(np.round(total_len / resample_step)))
+            u_eval = np.linspace(0.0, 1.0, n_samples)
+            z_spl, y_spl, x_spl = splev(u_eval, tck)
+
+            refined = np.column_stack([z_spl, y_spl, x_spl]).astype(np.float32)
+            refined[0] = start_pt
+            refined[-1] = end_pt
+            for wp in wp_list:
+                idx_r = int(np.argmin(np.linalg.norm(refined - wp, axis=1)))
+                refined[idx_r] = wp
+            return refined
         except Exception:
-            return smoothed_pts.astype(np.float32)
+            return smoothed.astype(np.float32)
 
     def resolve_connections(self, seeds, crop_bounds=None):
         """
@@ -619,6 +689,7 @@ class RealDataCurationEngine:
 
         resolved_curves = {}
         curves_3d_json = {}
+        resolved_waypoints = {}
         inst_skel = np.zeros((S, S, S), dtype=np.uint16)
 
         # Build dynamic cost tensor (1 / EDT^2)
@@ -632,9 +703,89 @@ class RealDataCurationEngine:
 
         for fid, seed_list in fiber_groups.items():
             if len(seed_list) >= 2:
-                # Deterministic pair/waypoint geodesic path resolution
-                sorted_seeds = sorted(seed_list, key=lambda s: (s.get('is_waypoint', False), s.get('face', '')))
+                # Step 1: Identify terminal endpoints vs intermediate waypoints
+                explicit_waypoints = [s for s in seed_list if s.get('is_waypoint', False)]
+                non_waypoints = [s for s in seed_list if not s.get('is_waypoint', False)]
+
+                if len(non_waypoints) == 2:
+                    start_s = non_waypoints[0]
+                    end_s = non_waypoints[1]
+                    waypoints = explicit_waypoints
+                elif len(non_waypoints) > 2:
+                    def is_cube_boundary(s):
+                        p = s['pos3d']
+                        return (p[0] in (0, S - 1) or p[1] in (0, S - 1) or p[2] in (0, S - 1))
+
+                    boundary_cands = [s for s in non_waypoints if is_cube_boundary(s)]
+                    if len(boundary_cands) == 2:
+                        start_s = boundary_cands[0]
+                        end_s = boundary_cands[1]
+                        waypoints = [s for s in seed_list if s is not start_s and s is not end_s]
+                    elif len(boundary_cands) > 2:
+                        # Pick the pair of boundary candidates furthest apart as start & end
+                        max_d = -1.0
+                        best_pair = (boundary_cands[0], boundary_cands[-1])
+                        for i in range(len(boundary_cands)):
+                            for j in range(i + 1, len(boundary_cands)):
+                                d = float(np.linalg.norm(np.array(boundary_cands[i]['pos3d'], dtype=np.float32) - np.array(boundary_cands[j]['pos3d'], dtype=np.float32)))
+                                if d > max_d:
+                                    max_d = d
+                                    best_pair = (boundary_cands[i], boundary_cands[j])
+                        start_s, end_s = best_pair
+                        waypoints = [s for s in seed_list if s is not start_s and s is not end_s]
+                    else:
+                        # Pick the pair of all seeds furthest apart
+                        max_d = -1.0
+                        best_pair = (seed_list[0], seed_list[-1])
+                        for i in range(len(seed_list)):
+                            for j in range(i + 1, len(seed_list)):
+                                d = float(np.linalg.norm(np.array(seed_list[i]['pos3d'], dtype=np.float32) - np.array(seed_list[j]['pos3d'], dtype=np.float32)))
+                                if d > max_d:
+                                    max_d = d
+                                    best_pair = (seed_list[i], seed_list[j])
+                        start_s, end_s = best_pair
+                        waypoints = [s for s in seed_list if s is not start_s and s is not end_s]
+                elif len(non_waypoints) == 1:
+                    start_s = non_waypoints[0]
+                    p_start = np.array(start_s['pos3d'], dtype=np.float32)
+                    dists = [np.linalg.norm(np.array(w['pos3d'], dtype=np.float32) - p_start) for w in explicit_waypoints]
+                    furthest_idx = int(np.argmax(dists))
+                    end_s = explicit_waypoints[furthest_idx]
+                    waypoints = [w for idx, w in enumerate(explicit_waypoints) if idx != furthest_idx]
+                else:
+                    max_d = -1.0
+                    best_pair = (seed_list[0], seed_list[-1])
+                    for i in range(len(seed_list)):
+                        for j in range(i + 1, len(seed_list)):
+                            d = float(np.linalg.norm(np.array(seed_list[i]['pos3d'], dtype=np.float32) - np.array(seed_list[j]['pos3d'], dtype=np.float32)))
+                            if d > max_d:
+                                max_d = d
+                                best_pair = (seed_list[i], seed_list[j])
+                    start_s, end_s = best_pair
+                    waypoints = [s for s in seed_list if s is not start_s and s is not end_s]
+
+                # Step 2: Order intermediate waypoints between start_s and end_s
+                if len(waypoints) == 0:
+                    sorted_seeds = [start_s, end_s]
+                elif len(waypoints) == 1:
+                    sorted_seeds = [start_s, waypoints[0], end_s]
+                else:
+                    p_start = np.array(start_s['pos3d'], dtype=np.float32)
+                    p_end = np.array(end_s['pos3d'], dtype=np.float32)
+                    best_order = waypoints
+                    min_cost = float('inf')
+                    for perm in itertools.permutations(waypoints):
+                        cost = float(np.linalg.norm(np.array(perm[0]['pos3d'], dtype=np.float32) - p_start))
+                        for idx in range(len(perm) - 1):
+                            cost += float(np.linalg.norm(np.array(perm[idx + 1]['pos3d'], dtype=np.float32) - np.array(perm[idx]['pos3d'], dtype=np.float32)))
+                        cost += float(np.linalg.norm(p_end - np.array(perm[-1]['pos3d'], dtype=np.float32)))
+                        if cost < min_cost:
+                            min_cost = cost
+                            best_order = perm
+                    sorted_seeds = [start_s] + list(best_order) + [end_s]
+
                 sub_paths = []
+                snapped_waypoints = []
                 for k in range(len(sorted_seeds) - 1):
                     s1 = sorted_seeds[k]
                     s2 = sorted_seeds[k + 1]
@@ -643,6 +794,9 @@ class RealDataCurationEngine:
 
                     p1_snapped = self._snap_to_foreground(p1)
                     p2_snapped = self._snap_to_foreground(p2)
+
+                    if k > 0 and p1_snapped is not None:
+                        snapped_waypoints.append(np.array(p1_snapped, dtype=np.float32))
 
                     if p1_snapped is not None and p2_snapped is not None:
                         path = self._route_fiber_lane_guided(p1_snapped, p2_snapped, dynamic_cost)
@@ -655,6 +809,7 @@ class RealDataCurationEngine:
                 if len(sub_paths) > 0:
                     full_curve = np.concatenate(sub_paths, axis=0)
                     resolved_curves[fid] = full_curve
+                    resolved_waypoints[fid] = snapped_waypoints
                     curves_3d_json[fid] = full_curve.tolist()
 
                     for pt in full_curve.astype(int):
@@ -683,25 +838,38 @@ class RealDataCurationEngine:
             # Pass 1: Initial Voronoi multi-label diffusion from coarse Dijkstra paths
             for fid, curve in resolved_curves.items():
                 r_int = np.clip(np.round(curve).astype(int), 0, S - 1)
-                inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
+                in_fg = self.current_patch_bin[r_int[:, 0], r_int[:, 1], r_int[:, 2]]
+                r_fg = r_int[in_fg]
+                if len(r_fg) > 0:
+                    inst_skel[r_fg[:, 0], r_fg[:, 1], r_fg[:, 2]] = fid
+                else:
+                    inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
             inst_vol = diffuse_labels_voronoi(inst_skel, fg_mask=self.current_patch_bin, verbose=False).astype(np.uint16)
+            inst_vol[~self.current_patch_bin] = 0
             clean_patch_bin = (inst_vol > 0)
 
             # Pass 2: Auto-refine each curve to its exact cross-sectional center of mass
             inst_skel.fill(0)
             for fid in list(resolved_curves.keys()):
                 f_mask = (inst_vol == fid)
-                if np.sum(f_mask) >= 5:
-                    refined = self._center_curve_to_mask(resolved_curves[fid], f_mask)
-                    resolved_curves[fid] = refined
-                    curves_3d_json[fid] = refined.tolist()
+                wps = resolved_waypoints.get(fid, [])
+                refined = self._center_curve_to_mask(resolved_curves[fid], f_mask if np.sum(f_mask) >= 5 else None, waypoints=wps)
+                resolved_curves[fid] = refined
+                curves_3d_json[fid] = refined.tolist()
 
                 r_int = np.clip(np.round(resolved_curves[fid]).astype(int), 0, S - 1)
-                inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
+                in_fg = self.current_patch_bin[r_int[:, 0], r_int[:, 1], r_int[:, 2]]
+                r_fg = r_int[in_fg]
+                if len(r_fg) > 0:
+                    inst_skel[r_fg[:, 0], r_fg[:, 1], r_fg[:, 2]] = fid
+                else:
+                    inst_skel[r_int[:, 0], r_int[:, 1], r_int[:, 2]] = fid
 
             # Pass 3: Recompute multi-label diffusion, exact distance field and targets using centered curves
             inst_vol = diffuse_labels_voronoi(inst_skel, fg_mask=self.current_patch_bin, verbose=False).astype(np.uint16)
+            inst_vol[~self.current_patch_bin] = 0
             clean_patch_bin = (inst_vol > 0)
+            inst_skel[~self.current_patch_bin] = 0
 
             all_pts = [curve for curve in resolved_curves.values()]
             all_skel_coords = np.vstack(all_pts)
@@ -772,10 +940,13 @@ class RealDataCurationEngine:
             'curves_3d': curves_3d_json
         }
 
-    def _snap_to_foreground(self, pt, search_radius=4):
+    def _snap_to_foreground(self, pt, search_radius=6):
         S = self.cube_size
-        z, y, x = pt
-        if 0 <= z < S and 0 <= y < S and 0 <= x < S and self.current_patch_bin[z, y, x]:
+        z = max(0, min(S - 1, int(pt[0])))
+        y = max(0, min(S - 1, int(pt[1])))
+        x = max(0, min(S - 1, int(pt[2])))
+
+        if self.current_patch_bin[z, y, x]:
             return (z, y, x)
 
         z1, z2 = max(0, z - search_radius), min(S, z + search_radius + 1)
@@ -786,7 +957,7 @@ class RealDataCurationEngine:
         if np.any(sub_dt > 0):
             max_idx = np.unravel_index(np.argmax(sub_dt), sub_dt.shape)
             return (z1 + max_idx[0], y1 + max_idx[1], x1 + max_idx[2])
-        return None
+        return (z, y, x)
 
     def _route_fiber_lane_guided(self, p1, p2, dynamic_cost, perpendicular_weight=0.20):
         """
@@ -969,9 +1140,11 @@ class RealDataCurationEngine:
 
         prefix = os.path.join(self.curated_output_dir, f"patch_{idx:04d}")
 
-        patch_bin = self.current_resolution.get('clean_patch_bin', self.current_patch_bin)
-        inst_vol = self.current_resolution['inst_vol']
-        inst_skel = self.current_resolution['inst_skel']
+        patch_bin = self.current_patch_bin
+        inst_vol = self.current_resolution['inst_vol'].copy()
+        inst_vol[~patch_bin] = 0
+        inst_skel = self.current_resolution['inst_skel'].copy()
+        inst_skel[~patch_bin] = 0
         ori_vol = self.current_resolution['ori_vol']
         intensity_target = self.current_resolution['intensity_target']
 

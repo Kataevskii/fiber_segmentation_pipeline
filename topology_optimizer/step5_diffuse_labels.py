@@ -16,6 +16,7 @@ from collections import defaultdict
 import numpy as np
 from scipy.ndimage import label as nd_label
 from scipy.spatial import cKDTree
+from skimage.segmentation import watershed
 
 try:
     from .step3_build_fragment_graph import FiberFragment
@@ -130,26 +131,29 @@ def diffuse_labels_voronoi(
     """
     D, H, W = inst_skel.shape
 
-    # 1. Build foreground binary mask
+    # 1. Build foreground binary mask strictly from fiber voxels
     if fg_mask is not None:
-        full_fg = (fg_mask > 0) | (inst_skel > 0)
+        full_fg = (fg_mask > 0)
     elif volume is not None and intensity is not None:
-        full_fg = (volume > vol_threshold) | (intensity >= fg_threshold) | (inst_skel > 0)
+        full_fg = (volume > vol_threshold) | (intensity >= fg_threshold)
     elif volume is not None:
-        full_fg = (volume > vol_threshold) | (inst_skel > 0)
+        full_fg = (volume > vol_threshold)
     elif intensity is not None:
-        full_fg = (intensity >= fg_threshold) | (inst_skel > 0)
+        full_fg = (intensity >= fg_threshold)
     else:
-        full_fg = inst_skel > 0
+        full_fg = (inst_skel > 0)
 
-    seed_idx = np.nonzero(inst_skel)
+    # Use skeleton seeds that reside inside legitimate fiber foreground
+    seed_idx = np.nonzero((inst_skel > 0) & full_fg)
     if len(seed_idx[0]) == 0:
-        if verbose:
-            print("  [diffuse] No labeled seeds -- returning zeros.", flush=True)
-        if out_vol_mmap is not None:
-            out_vol_mmap[:] = 0
-            return out_vol_mmap
-        return np.zeros_like(inst_skel, dtype=np.int32)
+        seed_idx = np.nonzero(inst_skel > 0)
+        if len(seed_idx[0]) == 0:
+            if verbose:
+                print("  [diffuse] No labeled seeds -- returning zeros.", flush=True)
+            if out_vol_mmap is not None:
+                out_vol_mmap[:] = 0
+                return out_vol_mmap
+            return np.zeros_like(inst_skel, dtype=np.int32)
 
     # 2. Extract 3D Connected Components on foreground
     cc_labels, num_cc = nd_label(full_fg, structure=np.ones((3, 3, 3), dtype=bool))
@@ -212,16 +216,50 @@ def diffuse_labels_voronoi(
         if len(unique_comp_seed_lbls) == 1:
             instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = unique_comp_seed_lbls[0]
         else:
-            comp_s_coords = np.column_stack([skel_z[seed_idxs], skel_y[seed_idxs], skel_x[seed_idxs]]).astype(np.float32)
-            tree = cKDTree(comp_s_coords)
-            comp_fg_coords = np.column_stack([comp_pts_z, comp_pts_y, comp_pts_x]).astype(np.float32)
-            _, nearest = tree.query(comp_fg_coords, workers=-1)
-            instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = comp_seed_lbls[nearest]
+            # Geodesic Voronoi distance transform strictly across fiber voxels
+            min_z, max_z = int(np.min(comp_pts_z)), int(np.max(comp_pts_z)) + 1
+            min_y, max_y = int(np.min(comp_pts_y)), int(np.max(comp_pts_y)) + 1
+            min_x, max_x = int(np.min(comp_pts_x)), int(np.max(comp_pts_x)) + 1
+
+            sub_mask = (cc_labels[min_z:max_z, min_y:max_y, min_x:max_x] == c_id)
+            sub_markers = np.zeros(sub_mask.shape, dtype=np.int32)
+            s_z = skel_z[seed_idxs] - min_z
+            s_y = skel_y[seed_idxs] - min_y
+            s_x = skel_x[seed_idxs] - min_x
+            valid_seeds = (s_z >= 0) & (s_z < sub_mask.shape[0]) & \
+                          (s_y >= 0) & (s_y < sub_mask.shape[1]) & \
+                          (s_x >= 0) & (s_x < sub_mask.shape[2])
+
+            if np.any(valid_seeds):
+                vs_z = s_z[valid_seeds]
+                vs_y = s_y[valid_seeds]
+                vs_x = s_x[valid_seeds]
+                in_sub = sub_mask[vs_z, vs_y, vs_x]
+                if np.any(in_sub):
+                    sub_markers[vs_z[in_sub], vs_y[in_sub], vs_x[in_sub]] = comp_seed_lbls[valid_seeds][in_sub]
+                    sub_labeled = watershed(np.zeros(sub_mask.shape, dtype=np.uint8), markers=sub_markers, mask=sub_mask, connectivity=3)
+                    instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = sub_labeled[comp_pts_z - min_z, comp_pts_y - min_y, comp_pts_x - min_x]
+                else:
+                    comp_s_coords = np.column_stack([skel_z[seed_idxs], skel_y[seed_idxs], skel_x[seed_idxs]]).astype(np.float32)
+                    tree = cKDTree(comp_s_coords)
+                    comp_fg_coords = np.column_stack([comp_pts_z, comp_pts_y, comp_pts_x]).astype(np.float32)
+                    _, nearest = tree.query(comp_fg_coords, workers=-1)
+                    instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = comp_seed_lbls[nearest]
+            else:
+                comp_s_coords = np.column_stack([skel_z[seed_idxs], skel_y[seed_idxs], skel_x[seed_idxs]]).astype(np.float32)
+                tree = cKDTree(comp_s_coords)
+                comp_fg_coords = np.column_stack([comp_pts_z, comp_pts_y, comp_pts_x]).astype(np.float32)
+                _, nearest = tree.query(comp_fg_coords, workers=-1)
+                instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = comp_seed_lbls[nearest]
 
         n_labeled_voxels += len(comp_pts_z)
 
-    # Hard-lock skeleton seeds so they can NEVER be stolen or overwritten
-    instance_vol[skel_z, skel_y, skel_x] = skel_labels
+    # Hard-lock skeleton seeds on foreground voxels
+    valid_skel_in_fg = full_fg[skel_z, skel_y, skel_x]
+    instance_vol[skel_z[valid_skel_in_fg], skel_y[valid_skel_in_fg], skel_x[valid_skel_in_fg]] = skel_labels[valid_skel_in_fg]
+
+    # Guarantee zero label propagation into empty/background voxels
+    instance_vol[~full_fg] = 0
 
     if hasattr(instance_vol, 'flush'):
         instance_vol.flush()

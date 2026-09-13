@@ -81,6 +81,23 @@ def test_curation_engine():
         assert np.all(inst_vol[skel_mask] == inst_skel[skel_mask]), "Centerline voxels must strictly match inst_vol!"
         print("Centerline seed preservation verified: 0 mismatches.")
 
+        # 4b. Test multi-seed intermediate waypoint guidance (Start, End, Mid UI workflow)
+        if len(fg_coords) >= 3:
+            p_mid = fg_coords[len(fg_coords) // 2]
+            test_guided_seeds = [
+                {'face': 'custom', 'pos3d': list(p1), 'fiber_id': 1},
+                {'face': 'custom', 'pos3d': list(p2), 'fiber_id': 1},
+                {'face': 'internal', 'pos3d': list(p_mid), 'fiber_id': 1}
+            ]
+            guided_res = engine.resolve_connections(test_guided_seeds)
+            assert guided_res['success'] == True
+            curve1 = np.array(guided_res['curves_3d'][1])
+            d_start = np.linalg.norm(curve1[0] - p1)
+            d_end = np.linalg.norm(curve1[-1] - p2)
+            d_mid = np.min(np.linalg.norm(curve1 - p_mid, axis=1))
+            assert d_start < 0.5 and d_end < 0.5 and d_mid < 0.5, f"Waypoint guidance failed! d_start={d_start}, d_end={d_end}, d_mid={d_mid}"
+            print(f"Intermediate waypoint guidance verified: d_start={d_start:.2f}, d_end={d_end:.2f}, d_mid={d_mid:.2f} voxels.")
+
         # 5. Test saving curated sample to isolated temporary directory
         print("\n--- [5/7] Testing Save Curated Sample & Reloading in Sandbox ---")
         save_res = engine.save_current_curated_sample()

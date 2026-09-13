@@ -1299,13 +1299,13 @@ HTML_TEMPLATE = r"""
                         </label>
                         <label class="toggle-pill">
                             <input type="radio" name="modal-extract-mode" id="modal-mode-manual" value="manual" onchange="toggleModalCoordMode()">
-                            <span>📍 Manual Origin (Z, Y, X)</span>
+                            <span>📍 Manual Origin (X, Y, Z)</span>
                         </label>
                     </div>
                     <div class="modal-coord-inputs" id="modal-manual-coords" style="display: none; margin-top: 6px;">
-                        <span>Z:</span> <input type="number" id="modal-z" class="crop-num-input" value="100" style="width: 55px;">
-                        <span>Y:</span> <input type="number" id="modal-y" class="crop-num-input" value="100" style="width: 55px;">
                         <span>X:</span> <input type="number" id="modal-x" class="crop-num-input" value="100" style="width: 55px;">
+                        <span>Y:</span> <input type="number" id="modal-y" class="crop-num-input" value="100" style="width: 55px;">
+                        <span>Z:</span> <input type="number" id="modal-z" class="crop-num-input" value="100" style="width: 55px;">
                     </div>
                 </div>
             </div>
@@ -1338,11 +1338,11 @@ HTML_TEMPLATE = r"""
 
         <!-- Center: Coordinate Origin Input + Random Button -->
         <div class="header-center">
-            <div class="coord-capsule" title="Type (Z, Y, X) origin coordinates and press Enter or click Go">
+            <div class="coord-capsule" title="Type (X, Y, Z) origin coordinates and press Enter or click Go">
                 <span class="coord-title">Origin:</span>
-                <span class="c-tag">Z</span><input type="number" id="load-coord-z" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
-                <span class="c-tag">Y</span><input type="number" id="load-coord-y" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
                 <span class="c-tag">X</span><input type="number" id="load-coord-x" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
+                <span class="c-tag">Y</span><input type="number" id="load-coord-y" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
+                <span class="c-tag">Z</span><input type="number" id="load-coord-z" class="c-input global-coord-input" min="0" max="404" value="0" onkeydown="handleCoordKey(event)">
                 <button class="btn-go-coords" onclick="loadManualCoordinates()" title="Jump to coordinates [Enter]">Go ↵</button>
             </div>
 
@@ -1448,14 +1448,14 @@ HTML_TEMPLATE = r"""
 
                 <!-- 3-Axis Sliders -->
                 <div style="display: flex; flex-direction: column; gap: 4px;">
-                    <!-- Z Axis (Depth) -->
+                    <!-- X Axis (Width) -->
                     <div class="crop-row">
-                        <span class="crop-axis-label">Z:</span>
-                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
-                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
-                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
-                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
-                        <span id="crop-z-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
+                        <span class="crop-axis-label">X:</span>
+                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
+                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
+                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
+                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
+                        <span id="crop-x-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
                     <!-- Y Axis (Height) -->
@@ -1468,14 +1468,14 @@ HTML_TEMPLATE = r"""
                         <span id="crop-y-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
 
-                    <!-- X Axis (Width) -->
+                    <!-- Z Axis (Depth) -->
                     <div class="crop-row">
-                        <span class="crop-axis-label">X:</span>
-                        <input type="number" id="crop-x-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
-                        <input type="range" id="crop-x-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('x', 'min', this.value)" onwheel="handleCropWheel(event, 'x', 'min')">
-                        <input type="range" id="crop-x-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
-                        <input type="number" id="crop-x-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('x', 'max', this.value)" onwheel="handleCropWheel(event, 'x', 'max')">
-                        <span id="crop-x-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
+                        <span class="crop-axis-label">Z:</span>
+                        <input type="number" id="crop-z-min" class="crop-num-input" min="0" max="95" step="1" value="0" oninput="onCropRangeInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
+                        <input type="range" id="crop-z-min-slider" class="crop-range-slider" min="0" max="95" step="1" value="0" oninput="onCropSliderInput('z', 'min', this.value)" onwheel="handleCropWheel(event, 'z', 'min')">
+                        <input type="range" id="crop-z-max-slider" class="crop-range-slider" min="0" max="95" step="1" value="95" oninput="onCropSliderInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
+                        <input type="number" id="crop-z-max" class="crop-num-input" min="0" max="95" step="1" value="95" oninput="onCropRangeInput('z', 'max', this.value)" onwheel="handleCropWheel(event, 'z', 'max')">
+                        <span id="crop-z-span" class="badge" style="padding: 1px 4px; font-size: 9px;">Δ96</span>
                     </div>
                 </div>
 
@@ -1664,11 +1664,58 @@ HTML_TEMPLATE = r"""
             });
         }
 
+        function sortFiberSeedsForCurve(fSeeds) {
+            if (!fSeeds || fSeeds.length <= 2) return fSeeds || [];
+            const nonWp = fSeeds.filter(s => !s.is_waypoint && s.face !== 'internal' && s.face !== 'waypoint');
+            let start_s = fSeeds[0];
+            let end_s = fSeeds[fSeeds.length - 1];
+            let wps = [];
+
+            if (nonWp.length === 2) {
+                start_s = nonWp[0];
+                end_s = nonWp[1];
+                wps = fSeeds.filter(s => s !== start_s && s !== end_s);
+            } else {
+                let maxD = -1;
+                for (let i = 0; i < fSeeds.length; i++) {
+                    for (let j = i + 1; j < fSeeds.length; j++) {
+                        const dz = fSeeds[i].pos3d[0] - fSeeds[j].pos3d[0];
+                        const dy = fSeeds[i].pos3d[1] - fSeeds[j].pos3d[1];
+                        const dx = fSeeds[i].pos3d[2] - fSeeds[j].pos3d[2];
+                        const d = Math.hypot(dz, dy, dx);
+                        if (d > maxD) {
+                            maxD = d;
+                            start_s = fSeeds[i];
+                            end_s = fSeeds[j];
+                        }
+                    }
+                }
+                wps = fSeeds.filter(s => s !== start_s && s !== end_s);
+            }
+
+            if (wps.length <= 1) {
+                return wps.length === 1 ? [start_s, wps[0], end_s] : [start_s, end_s];
+            }
+
+            const vz = end_s.pos3d[0] - start_s.pos3d[0];
+            const vy = end_s.pos3d[1] - start_s.pos3d[1];
+            const vx = end_s.pos3d[2] - start_s.pos3d[2];
+            const vlen2 = vz * vz + vy * vy + vx * vx || 1;
+
+            const sortedWps = [...wps].sort((a, b) => {
+                const projA = ((a.pos3d[0] - start_s.pos3d[0]) * vz + (a.pos3d[1] - start_s.pos3d[1]) * vy + (a.pos3d[2] - start_s.pos3d[2]) * vx) / vlen2;
+                const projB = ((b.pos3d[0] - start_s.pos3d[0]) * vz + (b.pos3d[1] - start_s.pos3d[1]) * vy + (b.pos3d[2] - start_s.pos3d[2]) * vx) / vlen2;
+                return projA - projB;
+            });
+            return [start_s, ...sortedWps, end_s];
+        }
+
         function redrawFiberCurveLocally(fid) {
             const fSeeds = seedsList.filter(s => s.fiber_id === fid);
             if (fSeeds.length < 2) return;
 
-            const controlPoints = fSeeds.map(s => new THREE.Vector3(s.pos3d[2], s.pos3d[1], s.pos3d[0]));
+            const sorted = sortFiberSeedsForCurve(fSeeds);
+            const controlPoints = sorted.map(s => new THREE.Vector3(s.pos3d[2], s.pos3d[1], s.pos3d[0]));
 
             const oldMesh = curves3DGroup.children.find(c => c.userData && c.userData.fiberId === fid);
             if (oldMesh) {
@@ -1677,8 +1724,8 @@ HTML_TEMPLATE = r"""
                 if (oldMesh.material) oldMesh.material.dispose();
             }
 
-            const curve = new THREE.CatmullRomCurve3(controlPoints);
-            const tubeGeo = new THREE.TubeGeometry(curve, 32, 1.3, 8, false);
+            const curve = new THREE.CatmullRomCurve3(controlPoints, false, 'centripetal', 0.25);
+            const tubeGeo = new THREE.TubeGeometry(curve, Math.max(32, controlPoints.length * 4), 1.3, 12, false);
             const colorHex = parseInt(COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length].replace('#', '0x'));
             const tubeMat = new THREE.MeshStandardMaterial({
                 color: colorHex,
@@ -2279,10 +2326,8 @@ HTML_TEMPLATE = r"""
                 else if (faceName === 'y_min' || faceName === 'y_max') { u = z; v = x; }
                 else { u = z; v = y; }
 
-                // Strict check: Must be on the exact same face AND within 4 voxels in 3D
-                // This completely prevents deleting points on opposite faces or other sides of the cube
+                // Strict check: Within 4 voxels in 3D to toggle/delete
                 const existingIdx = seedsList.findIndex(s => {
-                    if (s.face !== faceName) return false;
                     const dz = s.pos3d[0] - z;
                     const dy = s.pos3d[1] - y;
                     const dx = s.pos3d[2] - x;
@@ -2292,21 +2337,35 @@ HTML_TEMPLATE = r"""
                 if (existingIdx >= 0) {
                     seedsList.splice(existingIdx, 1);
                 } else {
+                    const isOuterBoundary = (
+                        (faceName === 'z_min' && z === 0) ||
+                        (faceName === 'z_max' && z === 95) ||
+                        (faceName === 'y_min' && y === 0) ||
+                        (faceName === 'y_max' && y === 95) ||
+                        (faceName === 'x_min' && x === 0) ||
+                        (faceName === 'x_max' && x === 95)
+                    );
+                    const existingFiberSeeds = seedsList.filter(s => s.fiber_id === activeFiberId);
+                    const isWaypoint = (!isOuterBoundary) || (existingFiberSeeds.length >= 2);
+
                     seedsList.push({
-                        face: faceName,
+                        face: isOuterBoundary ? faceName : 'internal',
                         u: u,
                         v: v,
                         pos3d: [z, y, x],
-                        fiber_id: activeFiberId
+                        fiber_id: activeFiberId,
+                        is_waypoint: isWaypoint
                     });
 
-                    // QoL: Only auto-advance if we just completed the 2nd point for the HIGHEST current Fiber ID
-                    const currentFiberBoundarySeeds = seedsList.filter(s => s.fiber_id === activeFiberId && !s.is_waypoint && s.face !== 'waypoint');
-                    if (currentFiberBoundarySeeds.length === 2) {
-                        const allFiberIds = seedsList.map(s => s.fiber_id);
-                        const maxCurrentId = allFiberIds.length > 0 ? Math.max(...allFiberIds) : 1;
-                        if (activeFiberId >= maxCurrentId) {
-                            setActiveId(activeFiberId + 1);
+                    // QoL: Only auto-advance if we just completed the 2nd boundary point for the HIGHEST current Fiber ID
+                    if (!isWaypoint) {
+                        const currentFiberBoundarySeeds = seedsList.filter(s => s.fiber_id === activeFiberId && !s.is_waypoint && s.face !== 'waypoint' && s.face !== 'internal');
+                        if (currentFiberBoundarySeeds.length === 2) {
+                            const allFiberIds = seedsList.map(s => s.fiber_id);
+                            const maxCurrentId = allFiberIds.length > 0 ? Math.max(...allFiberIds) : 1;
+                            if (activeFiberId >= maxCurrentId) {
+                                setActiveId(activeFiberId + 1);
+                            }
                         }
                     }
                 }
@@ -2422,8 +2481,8 @@ HTML_TEMPLATE = r"""
 
                 const vectors = pts.map(p => new THREE.Vector3(p[2], p[1], p[0]));
                 if (vectors.length >= 2) {
-                    const curve = new THREE.CatmullRomCurve3(vectors);
-                    const tubeGeo = new THREE.TubeGeometry(curve, Math.max(20, pts.length), 1.3, 8, false);
+                    const curve = new THREE.CatmullRomCurve3(vectors, false, 'centripetal', 0.25);
+                    const tubeGeo = new THREE.TubeGeometry(curve, Math.max(48, pts.length * 2), 1.3, 12, false);
                     const tubeMat = new THREE.MeshStandardMaterial({
                         color: colorHex,
                         emissive: colorHex,
@@ -2520,16 +2579,18 @@ HTML_TEMPLATE = r"""
 
         function updateCoordinateInputs(origin, maxOrigin) {
             if (!origin) return;
-            const zInput = document.getElementById('load-coord-z');
-            const yInput = document.getElementById('load-coord-y');
             const xInput = document.getElementById('load-coord-x');
-            if (zInput) zInput.value = origin[0];
-            if (yInput) yInput.value = origin[1];
+            const yInput = document.getElementById('load-coord-y');
+            const zInput = document.getElementById('load-coord-z');
+            // origin is [Z, Y, X] from backend
             if (xInput) xInput.value = origin[2];
+            if (yInput) yInput.value = origin[1];
+            if (zInput) zInput.value = origin[0];
             if (maxOrigin) {
-                if (zInput) zInput.max = maxOrigin[0];
-                if (yInput) yInput.max = maxOrigin[1];
+                // maxOrigin is [maxZ, maxY, maxX] from backend
                 if (xInput) xInput.max = maxOrigin[2];
+                if (yInput) yInput.max = maxOrigin[1];
+                if (zInput) zInput.max = maxOrigin[0];
             }
         }
 
@@ -2539,7 +2600,7 @@ HTML_TEMPLATE = r"""
             const curVal = document.getElementById('info-curated-val');
             const stVal = document.getElementById('info-status-val');
 
-            if (orgVal && origin) orgVal.innerText = `(Z:${origin[0]}, Y:${origin[1]}, X:${origin[2]})`;
+            if (orgVal && origin) orgVal.innerText = `(X:${origin[2]}, Y:${origin[1]}, Z:${origin[0]})`;
             if (denVal && density !== undefined) denVal.innerText = `${(density * 100).toFixed(1)}%`;
             if (curVal && curatedTotal !== undefined) curVal.innerText = `${curatedTotal} cubes`;
             if (stVal && statusText) stVal.innerText = statusText;
@@ -2557,21 +2618,21 @@ HTML_TEMPLATE = r"""
             }
         }
 
-        async function loadManualCoordinates(zVal, yVal, xVal) {
+        async function loadManualCoordinates(xVal, yVal, zVal) {
             try {
-                let z = zVal !== undefined ? parseInt(zVal) : parseInt(document.getElementById('load-coord-z').value || 0);
-                let y = yVal !== undefined ? parseInt(yVal) : parseInt(document.getElementById('load-coord-y').value || 0);
                 let x = xVal !== undefined ? parseInt(xVal) : parseInt(document.getElementById('load-coord-x').value || 0);
+                let y = yVal !== undefined ? parseInt(yVal) : parseInt(document.getElementById('load-coord-y').value || 0);
+                let z = zVal !== undefined ? parseInt(zVal) : parseInt(document.getElementById('load-coord-z').value || 0);
 
-                if (isNaN(z)) z = 0;
-                if (isNaN(y)) y = 0;
                 if (isNaN(x)) x = 0;
+                if (isNaN(y)) y = 0;
+                if (isNaN(z)) z = 0;
 
                 currentlyLoadedPatchIndex = null;
                 const sel = document.getElementById('saved-patches-select');
                 if (sel) sel.value = '';
 
-                setPerfStatus(`⏳ Loading 96³ Subvolume at (${z}, ${y}, ${x})...`);
+                setPerfStatus(`⏳ Loading 96³ Subvolume at (X=${x}, Y=${y}, Z=${z})...`);
                 const res = await fetch('/api/patch/coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2599,7 +2660,7 @@ HTML_TEMPLATE = r"""
                 }
 
                 const origBadge = document.getElementById('origin-badge');
-                if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+                if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(X=${data.origin[2]}, Y=${data.origin[1]}, Z=${data.origin[0]})</strong>`;
                 const densBadge = document.getElementById('density-badge');
                 if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
                 const curatedBadge = document.getElementById('curated-count');
@@ -2609,7 +2670,7 @@ HTML_TEMPLATE = r"""
                     setPerfStatus(`🟢 Loaded ${data.num_fibers} Fibers from Segmented TIFF! Inspect & Fix Wiring.`);
                     updateSidebarInfo(data.origin, data.density, data.curated_total, `Segmented: ${data.num_fibers} Fibers`);
                 } else {
-                    setPerfStatus(`📍 Loaded 96³ Subvolume at Origin (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`);
+                    setPerfStatus(`📍 Loaded 96³ Subvolume at Origin (X=${data.origin[2]}, Y=${data.origin[1]}, Z=${data.origin[0]})`);
                     updateSidebarInfo(data.origin, data.density, data.curated_total, 'Ready for Annotation');
                 }
 
@@ -2655,7 +2716,7 @@ HTML_TEMPLATE = r"""
                 updateCoordinateInputs(data.origin, data.max_origin);
 
                 const origBadge = document.getElementById('origin-badge');
-                if (origBadge && data.origin) origBadge.innerHTML = `Sample: <strong>#${String(patchId).padStart(4, '0')}</strong> (Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})`;
+                if (origBadge && data.origin) origBadge.innerHTML = `Sample: <strong>#${String(patchId).padStart(4, '0')}</strong> (X=${data.origin[2]}, Y=${data.origin[1]}, Z=${data.origin[0]})`;
                 const densBadge = document.getElementById('density-badge');
                 if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
                 const curatedBadge = document.getElementById('curated-count');
@@ -2707,7 +2768,7 @@ HTML_TEMPLATE = r"""
                 }
 
                 const origBadgeRand = document.getElementById('origin-badge');
-                if (origBadgeRand && data.origin) origBadgeRand.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+                if (origBadgeRand && data.origin) origBadgeRand.innerHTML = `Origin: <strong>(X=${data.origin[2]}, Y=${data.origin[1]}, Z=${data.origin[0]})</strong>`;
                 const densBadgeRand = document.getElementById('density-badge');
                 if (densBadgeRand && data.density !== undefined) densBadgeRand.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
                 const curatedBadgeRand = document.getElementById('curated-count');
@@ -2769,7 +2830,7 @@ HTML_TEMPLATE = r"""
             }
 
             sortedIds.forEach(id => {
-                const list = grouped[id];
+                const list = sortFiberSeedsForCurve(grouped[id]);
                 const chip = document.createElement('div');
                 chip.className = 'fiber-chip';
                 
@@ -2782,12 +2843,12 @@ HTML_TEMPLATE = r"""
                 const coordsHtml = list.map((s, idx) => {
                     const isWp = s.is_waypoint || s.face === 'waypoint' || s.face === 'internal';
                     if (isWp) {
-                        return `<span class="chip-wp-tag" title="Waypoint (Z=${s.pos3d[0]}, Y=${s.pos3d[1]}, X=${s.pos3d[2]})">
-                            <span>W:[${s.pos3d[0]},${s.pos3d[1]},${s.pos3d[2]}]</span>
+                        return `<span class="chip-wp-tag" title="Waypoint (X=${s.pos3d[2]}, Y=${s.pos3d[1]}, Z=${s.pos3d[0]})">
+                            <span>W:[${s.pos3d[2]},${s.pos3d[1]},${s.pos3d[0]}]</span>
                             <button style="background:none; border:none; color:var(--accent-magenta); cursor:pointer; font-size:9px; padding:0;" onclick="deleteWaypoint(${id}, ${s.pos3d[0]}, ${s.pos3d[1]}, ${s.pos3d[2]})" title="Delete this waypoint">✕</button>
                         </span>`;
                     }
-                    return `<span style="font-family:'JetBrains Mono',monospace;">[${s.pos3d[0]},${s.pos3d[1]},${s.pos3d[2]}]</span>`;
+                    return `<span style="font-family:'JetBrains Mono',monospace;">[${s.pos3d[2]},${s.pos3d[1]},${s.pos3d[0]}]</span>`;
                 }).join('<span style="color:var(--accent-cyan); font-size:10px; margin:0 2px;">➜</span>');
 
                 chip.innerHTML = `
@@ -2952,7 +3013,7 @@ HTML_TEMPLATE = r"""
             }
 
             const origBadge = document.getElementById('origin-badge');
-            if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(Z=${data.origin[0]}, Y=${data.origin[1]}, X=${data.origin[2]})</strong>`;
+            if (origBadge && data.origin) origBadge.innerHTML = `Origin: <strong>(X=${data.origin[2]}, Y=${data.origin[1]}, Z=${data.origin[0]})</strong>`;
             const densBadge = document.getElementById('density-badge');
             if (densBadge && data.density !== undefined) densBadge.innerHTML = `Density: <strong>${(data.density * 100).toFixed(1)}%</strong>`;
             const curatedBadge = document.getElementById('curated-count');
