@@ -152,22 +152,43 @@ def export_uint16_tiff(arr: np.ndarray, out_path: str, verbose: bool = True):
     total_bytes = arr.size * 2
     is_big = total_bytes > (2 * 1024 * 1024 * 1024)
 
-    if total_bytes < 1024 * 1024 * 1024:
-        # Fast in-memory write for arrays < 1 GB
+    axes = 'ZYX' if arr.ndim == 3 else ('YX' if arr.ndim == 2 else None)
+    meta = {'axes': axes} if axes else None
+
+    if total_bytes < 1024 * 1024 * 1024 and not isinstance(arr, np.memmap):
+        # Fast in-memory write for arrays < 1 GB (and not memory-mapped)
         u16_arr = np.asarray(arr, dtype=np.uint16)
         tifffile.imwrite(
             out_path,
             u16_arr,
             compression='zlib',
-            metadata={'axes': 'ZYX'},
+            metadata=meta,
             bigtiff=is_big,
         )
-    else:
-        # Stream slice-by-slice for huge volumes to keep resident RAM near zero
-        with tifffile.TiffWriter(out_path, bigtiff=True) as tif:
+    elif arr.ndim >= 3:
+        # Stream slice-by-slice for huge or memory-mapped volumes to keep resident RAM near zero
+        def _slice_gen():
             for z in range(D):
-                slice_u16 = np.asarray(arr[z], dtype=np.uint16)
-                tif.write(slice_u16, contiguous=True, compression='zlib')
+                yield np.asarray(arr[z], dtype=np.uint16)
+
+        tifffile.imwrite(
+            out_path,
+            _slice_gen(),
+            shape=arr.shape,
+            dtype=np.uint16,
+            compression='zlib',
+            metadata=meta,
+            bigtiff=True,
+        )
+    else:
+        u16_arr = np.asarray(arr, dtype=np.uint16)
+        tifffile.imwrite(
+            out_path,
+            u16_arr,
+            compression='zlib',
+            metadata=meta,
+            bigtiff=True,
+        )
 
     if verbose:
         size_mb = os.path.getsize(out_path) / (1024 * 1024)
