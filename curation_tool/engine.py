@@ -110,10 +110,22 @@ class RealDataCurationEngine:
 
         # Detect if it's a segmented instance volume
         is_instance = False
-        if np.issubdtype(arr.dtype, np.integer) and arr.max() > 1:
+        norm_path = file_path_clean.lower()
+        base_name = os.path.basename(norm_path)
+
+        if norm_path.startswith('data/fibers_to_segment'):
+            is_instance = False
+        elif 'instance' in base_name or ('seg' in base_name and 'fibers_to_segment' not in base_name):
             is_instance = True
-        elif 'instance' in file_path_clean.lower() or 'seg' in file_path_clean.lower():
-            is_instance = True
+        elif np.issubdtype(arr.dtype, np.integer):
+            # Check unique values to distinguish multi-fiber instance labels from binary masks ({0, 1} or {0, 255})
+            if arr.size > 2000000:
+                sample_unq = np.unique(arr[::max(1, arr.shape[0]//16), ::max(1, arr.shape[1]//16), ::max(1, arr.shape[2]//16)])
+            else:
+                sample_unq = np.unique(arr)
+            non_zero = sample_unq[sample_unq > 0]
+            if len(non_zero) > 1 and not (len(non_zero) == 1 and non_zero[0] in (1, 255)):
+                is_instance = True
 
         if is_instance:
             self.instance_volume_path = file_path_clean
@@ -122,7 +134,7 @@ class RealDataCurationEngine:
 
             # Look for matching skeleton file
             skel_candidate = file_path_clean.replace('instance_volume', 'instance_skeleton').replace('_volume', '_skeleton')
-            if os.path.exists(skel_candidate):
+            if skel_candidate != file_path_clean and os.path.exists(skel_candidate):
                 print(f"Auto-detected matching skeleton file: {skel_candidate}", flush=True)
                 if skel_candidate.endswith('.npy'):
                     self.full_instance_skel = np.load(skel_candidate, mmap_mode='r')
@@ -365,20 +377,32 @@ class RealDataCurationEngine:
         """
         Scans workspace for available 3D TIFF and NPY volumes.
         Categorizes them into Segmented Instance volumes and Raw Microscopy volumes.
+        Search paths:
+          - Raw volumes: data/fibers_to_segment/, data/curated/patches/ (*_vol.*)
+          - Segmented volumes: outputs/ (all subdirectories), data/curated/patches/ (*_instance.*)
         """
         import glob
         segmented_files = []
         raw_files = []
 
-        candidate_dirs = ['data/fibers_to_segment', 'outputs', 'data/curated/patches']
-        for cdir in candidate_dirs:
-            if not os.path.exists(cdir): continue
+        # 1. Discovered Raw Microscopy Volumes
+        raw_dirs = ['data/fibers_to_segment', 'data/curated/patches']
+        for rdir in raw_dirs:
+            if not os.path.exists(rdir):
+                continue
             for ext in ('*.tif', '*.tiff', '*.npy'):
-                for fpath in glob.glob(os.path.join(cdir, '**', ext), recursive=True):
+                for fpath in glob.glob(os.path.join(rdir, '**', ext), recursive=True):
                     fpath_clean = fpath.replace('\\', '/')
-                    lower = fpath_clean.lower()
-                    if 'skeleton' in lower or 'meta' in lower or 'centerline' in lower or 'intensity' in lower or 'ori' in lower:
+                    base_name = os.path.basename(fpath_clean).lower()
+
+                    # Exclude auxiliary / target / non-volume files
+                    if any(k in base_name for k in ['skeleton', 'meta', 'centerline', 'intensity', 'ori', 'orientation', 'probability', 'instance']):
                         continue
+
+                    # If scanning curated patches, only include patch raw volumes (*_vol)
+                    if 'data/curated/patches' in fpath_clean and not ('_vol.' in base_name):
+                        continue
+
                     try:
                         sz_mb = round(os.path.getsize(fpath_clean) / (1024 * 1024), 1)
                     except:
@@ -390,11 +414,59 @@ class RealDataCurationEngine:
                         'dir': os.path.dirname(fpath_clean),
                         'size_mb': sz_mb
                     }
+                    raw_files.append(item)
 
-                    if 'instance' in lower or 'seg' in lower or 'resolved' in lower:
-                        segmented_files.append(item)
-                    else:
-                        raw_files.append(item)
+        # 2. Discovered Segmented Instance Volumes
+        seg_dirs = ['outputs', 'data/curated/patches']
+        for sdir in seg_dirs:
+            if not os.path.exists(sdir):
+                continue
+            for ext in ('*.tif', '*.tiff', '*.npy'):
+                for fpath in glob.glob(os.path.join(sdir, '**', ext), recursive=True):
+                    fpath_clean = fpath.replace('\\', '/')
+                    base_name = os.path.basename(fpath_clean).lower()
+
+                    # Exclude auxiliary / target / non-volume files
+                    if any(k in base_name for k in ['skeleton', 'meta', 'centerline', 'intensity', 'ori', 'orientation', 'probability', '_consensus']):
+                        continue
+
+                    # In outputs/, exclude demo/comparison files and raw cached volume copies
+                    if sdir == 'outputs':
+                        if any(k in base_name for k in ['demo_', 'sample_', 'comparison', 'composite']):
+                            continue
+                        if not any(k in base_name for k in ['instance', 'seg', 'resolved']):
+                            continue
+
+                    # In curated patches, only include instance files
+                    if 'data/curated/patches' in fpath_clean and not ('_instance.' in base_name):
+                        continue
+
+                    try:
+                        sz_mb = round(os.path.getsize(fpath_clean) / (1024 * 1024), 1)
+                    except:
+                        sz_mb = 0
+
+                    item = {
+                        'path': fpath_clean,
+                        'name': os.path.basename(fpath_clean),
+                        'dir': os.path.dirname(fpath_clean),
+                        'size_mb': sz_mb
+                    }
+                    segmented_files.append(item)
+
+        # Sort: in segmented_files, prioritize outputs/ full volumes and TIFF over NPY
+        segmented_files.sort(key=lambda x: (
+            0 if x['path'].startswith('outputs') else 1,
+            0 if x['name'].lower().endswith(('.tif', '.tiff')) else 1,
+            x['path']
+        ))
+
+        # Sort: in raw_files, prioritize full volumes in data/fibers_to_segment over small patches
+        raw_files.sort(key=lambda x: (
+            0 if x['path'].startswith('data/fibers_to_segment') else 1,
+            0 if x['name'].lower().endswith(('.tif', '.tiff')) else 1,
+            x['path']
+        ))
 
         return {
             'segmented': segmented_files,

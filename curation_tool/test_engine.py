@@ -106,10 +106,14 @@ def test_curation_engine():
         print(f"Reloaded Patch #{save_res['saved_index']} verified successfully (0 centerline mismatches)")
 
         # 6. Test opening segmented instance TIFF (if present)
-        seg_candidate = 'outputs/instance_volume.tif'
-        if not os.path.exists(seg_candidate):
-            seg_candidate = 'outputs/fiber_resolution_final/instance_volume.tif'
-        if os.path.exists(seg_candidate):
+        seg_candidates = [
+            'outputs/instance_volume.tif',
+            'outputs/fiber_resolution_final/instance_volume.tif',
+            'outputs/topology_resolved_morpho/instance_volume.tif',
+            'outputs/topology_resolved/instance_volume.tif'
+        ]
+        seg_candidate = next((c for c in seg_candidates if os.path.exists(c)), None)
+        if seg_candidate:
             print(f"\n--- [6/7] Testing Segmented Instance TIFF Opening ({seg_candidate}) ---")
             open_res = engine.open_volume_file(seg_candidate, z=100, y=100, x=100)
             assert open_res['is_segmented_source'] == True
@@ -119,11 +123,26 @@ def test_curation_engine():
         else:
             print("\n--- [6/7] Skipping Segmented Instance TIFF (file not found) ---")
 
-        # 7. Test workspace file discovery
+        # 7. Test workspace file discovery & raw/segmented separation
         print("\n--- [7/7] Testing Workspace File Discovery ---")
         files_dict = engine.list_available_files()
         assert 'segmented' in files_dict and 'raw' in files_dict
         print(f"Discovered: {len(files_dict['segmented'])} Segmented volumes, {len(files_dict['raw'])} Raw volumes")
+
+        raw_paths = [f['path'] for f in files_dict['raw']]
+        seg_paths = [f['path'] for f in files_dict['segmented']]
+
+        # Assert raw volumes in data/fibers_to_segment are correctly categorized as raw and NOT segmented
+        assert any('COLLAGENCROP_003_0000.tif' in p for p in raw_paths), "COLLAGENCROP_003_0000.tif must be in raw presets!"
+        assert not any('data/fibers_to_segment' in p for p in seg_paths), "No files from data/fibers_to_segment should be in segmented presets!"
+
+        # Assert open_volume_file on raw volume correctly identifies it as raw_microscopy
+        test_raw_file = 'data/fibers_to_segment/COLLAGENCROP_003_0000.tif'
+        if os.path.exists(test_raw_file):
+            raw_open_res = engine.open_volume_file(test_raw_file, z=0, y=0, x=0)
+            assert raw_open_res['source_info']['type'] == 'raw_microscopy', f"Expected raw_microscopy, got {raw_open_res['source_info']['type']}"
+            assert raw_open_res.get('is_segmented_source', False) == False, "Raw volume should not have is_segmented_source=True"
+            print("Verified raw volume opening: correctly classified as raw_microscopy (0 false instance flags).")
 
     # Verify temporary directory is completely wiped
     assert not os.path.exists(tmp_curated_dir), "Temporary directory was not cleaned up!"

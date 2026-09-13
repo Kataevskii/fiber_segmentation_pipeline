@@ -2906,7 +2906,7 @@ HTML_TEMPLATE = r"""
                         sec.innerText = "🔬 Raw Microscopy Volumes:";
                         grid.appendChild(sec);
 
-                        data.raw.slice(0, 10).forEach(f => {
+                        data.raw.forEach(f => {
                             const item = document.createElement('div');
                             item.className = 'preset-item';
                             item.innerHTML = `<span class="preset-item-name">${f.path}</span> <span class="preset-tag raw">Raw (${f.size_mb} MB)</span>`;
