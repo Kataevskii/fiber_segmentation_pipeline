@@ -28,3 +28,7 @@
 /scratch_test_*
 *.tmp
 *.dat
+
+# Documentation
+/pipeline_docs/
+/docs/
