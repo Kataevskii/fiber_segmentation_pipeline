@@ -182,16 +182,32 @@ def train_intensity_model(
             fg_prob=0.85,
             jitter_voxels=2
         )
-    test_dataset = Fiber3DPatchDataset(
-        data_dir=test_dir,
-        real_data_dir=None,
-        patch_size=patch_size,
-        samples_per_epoch=50,
-        augment=False,
-        fg_prob=0.85
-    )
+    test_dataset = None
+    test_loader = None
+    if test_dir:
+        test_volume_paths, _, _ = collect_dataset_triplets(test_dir)
+        if test_volume_paths:
+            try:
+                test_dataset = Fiber3DPatchDataset(
+                    data_dir=test_dir,
+                    real_data_dir=None,
+                    patch_size=patch_size,
+                    samples_per_epoch=50,
+                    augment=False,
+                    fg_prob=0.85,
+                    allow_empty=True
+                )
+                test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=(device.type == 'cuda'))
+            except Exception as e:
+                print(f"Notice: Could not load test dataset from '{test_dir}' ({e}); testing will be skipped.", flush=True)
+                test_dataset = None
+                test_loader = None
+        else:
+            print(f"Notice: No test data found in '{test_dir}'; testing will be skipped.", flush=True)
+    else:
+        print("Notice: No test directory specified; testing will be skipped.", flush=True)
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=(device.type == 'cuda'))
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=(device.type == 'cuda'))
 
     model = IntensityUNet3D(in_channels=1, base_channels=effective_base_channels).to(device)
 
@@ -312,10 +328,10 @@ def train_intensity_model(
     print("=" * 80, flush=True)
 
     # -------------------------------------------------------------------------
-    # Final Unbiased Test Evaluation on Held-Out Test Set (Model 9)
+    # Final Unbiased Test Evaluation on Held-Out Test Set
     # -------------------------------------------------------------------------
     if test_loader and os.path.exists(save_path):
-        print(f"\n[FINAL BENCHMARK] Evaluating Best Checkpoint on Unseen Test Set ({test_dir} - Model 9)...", flush=True)
+        print(f"\n[FINAL BENCHMARK] Evaluating Best Checkpoint on Unseen Test Set ({test_dir})...", flush=True)
         ckpt = torch.load(save_path, map_location=device)
         model.load_state_dict(ckpt['model_state_dict'])
         model.eval()
@@ -334,10 +350,12 @@ def train_intensity_model(
         final_test_loss = test_running_loss / len(test_loader)
         final_test_dice = test_running_dice / len(test_loader)
         print("=" * 80, flush=True)
-        print(f" FINAL HELD-OUT TEST RESULTS (Model 9):", flush=True)
+        print(f" FINAL HELD-OUT TEST RESULTS:", flush=True)
         print(f"   - Test Total Loss:  {final_test_loss:.4f}", flush=True)
         print(f"   - Centerline Dice:  {final_test_dice:.4f} ({final_test_dice*100:.2f}%)", flush=True)
         print("=" * 80 + "\n", flush=True)
+    elif not test_loader:
+        print(f"\n[FINAL BENCHMARK] Skipped test evaluation (no test data found in '{test_dir}').\n", flush=True)
 
     # Plot training curves
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))

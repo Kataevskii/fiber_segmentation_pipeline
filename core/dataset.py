@@ -373,7 +373,8 @@ class Fiber3DPatchDataset(Dataset):
         jitter_voxels=2,
         real_data_dir='data/curated',
         real_stamp_prob=0.25,
-        verbose=False
+        verbose=False,
+        allow_empty=False
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -486,9 +487,14 @@ class Fiber3DPatchDataset(Dataset):
                 print(f"  Found {len(fiber_coords)} valid potential locations (|I| > 0.1).", flush=True)
 
         if not self.volume_paths:
-            raise ValueError(f"No valid dataset triplets found in '{data_dir}' or provided paths!")
+            if allow_empty:
+                self.samples_per_epoch = 0
+            else:
+                raise ValueError(f"No valid dataset triplets found in '{data_dir}' or provided paths!")
 
     def __len__(self):
+        if not self.volume_paths:
+            return 0
         return self.samples_per_epoch
 
     def _load_slice(self, file_path, z1, z2, y1, y2, x1, x2):
