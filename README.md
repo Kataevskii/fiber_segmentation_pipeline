@@ -267,8 +267,10 @@ Rather than predicting fragile 1-voxel binary masks that coalesce touching fiber
    - Peaks at $+1.0$ on the exact 1-voxel mathematical centerline $\mathcal{C}$.
    - Decays smoothly with Gaussian profile $G(\vec{x}) = \exp(-d(\vec{x}, \mathcal{C})^2 / 2\sigma^2)$.
    - Dips to negative values ($-1.0$) at multi-fiber crossing interfaces to force topological disconnectivity.
+   - Supervised via `IntensityLoss`: Foreground-weighted MSE ($W(\vec{x}) = 1.0 + 3.0 \cdot \mathbb{I}(|I_{\text{gt}}| > 0.05) + 4.0 \cdot \mathbb{I}(I_{\text{gt}} > 0.30)$), continuous soft centerline Dice loss, and negative intersection dip loss.
 2. **3D Continuous Unit Tangent Field $\vec{O}(\vec{x}) = (V_z, V_y, V_x)$ ($\|\vec{O}\| = 1.0$)**:
    - Predicts the unit orientation tangent vector at every foreground voxel.
+   - Supervised via `OrientationLoss`: Symmetric cosine alignment ($1 - |\vec{u} \cdot \vec{v}|$) weighted by foreground potential magnitude.
 
 ---
 

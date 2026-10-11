@@ -6,7 +6,7 @@ class IntensityLoss(nn.Module):
     """
     Specialized Loss for IntensityUNet3D:
     Trains the network to predict a continuous 3D Gaussian potential field I(x) in [-1, 1].
-    - Foreground-weighted MSE + Smooth L1
+    - Foreground-weighted MSE
     - Continuous Centerline Dice Loss
     - Negative Intersection Dip Loss
     """
@@ -31,10 +31,7 @@ class IntensityLoss(nn.Module):
 
         diff_sq = (pred_intensity - gt_intensity) ** 2
         intensity_mse = (diff_sq * voxel_weights).sum() / voxel_weight_sum
-
-        l1_diff = F.smooth_l1_loss(pred_intensity, gt_intensity, reduction='none')
-        intensity_l1 = (l1_diff * voxel_weights).sum() / voxel_weight_sum
-        intensity_loss = intensity_mse + intensity_l1
+        intensity_loss = intensity_mse
 
         # 2. Continuous Soft Centerline Dice Loss (Continuous vs Continuous)
         pos_gt = F.relu(gt_intensity)
