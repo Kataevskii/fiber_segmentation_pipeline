@@ -504,6 +504,45 @@ HTML_TEMPLATE = r"""
             cursor: pointer;
         }
 
+        /* 3D Viewport Rendering Mode Capsule */
+        .render-mode-capsule {
+            display: inline-flex;
+            align-items: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+        }
+
+        .mode-capsule-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .mode-capsule-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .mode-capsule-btn.active {
+            background: linear-gradient(135deg, rgba(0, 229, 255, 0.25) 0%, rgba(0, 230, 118, 0.20) 100%);
+            border-color: var(--accent-cyan);
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.35);
+        }
+
         /* Unified Fiber Controller Capsule */
         .fiber-control-capsule {
             display: flex;
@@ -1380,8 +1419,17 @@ HTML_TEMPLATE = r"""
         
         <div class="three-stage-panel">
             <div class="stage-header">
-                <!-- Viewport Density Slider -->
+                <!-- Viewport Mode & Density Controls -->
                 <div class="toggles-cluster">
+                    <div class="render-mode-capsule" title="Toggle 3D Viewport Mode (Hotkey: V)">
+                        <button class="mode-capsule-btn active" id="btn-mode-annotate" onclick="setRenderMode('annotate')" title="Annotation Mode: Box faces, Seeds/Notes, and Centerlines [Hotkey: V]">
+                            ✏️ Annotate
+                        </button>
+                        <button class="mode-capsule-btn" id="btn-mode-colored3d" onclick="setRenderMode('colored3d')" title="Resulting Colored 3D Mode: Only colored 3D TIFF segmentation shown, notes hidden [Hotkey: V]">
+                            🎨 Colored 3D
+                        </button>
+                    </div>
+
                     <label class="toggle-pill" title="Show / Hide 3D Coordinate Arrows next to the cube">
                         <input type="checkbox" id="toggle-axes-arrows" checked onchange="toggleAxesVisibility(this.checked)">
                         <span>🧭 Axes</span>
@@ -1417,7 +1465,7 @@ HTML_TEMPLATE = r"""
 
             <!-- 3D Interactive Box Viewport -->
             <div id="three-container">
-                <div class="three-overlay-hint">
+                <div class="three-overlay-hint" id="three-overlay-hint">
                     🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom
                 </div>
             </div>
@@ -1425,6 +1473,7 @@ HTML_TEMPLATE = r"""
             <div class="shortcuts-hint">
                 <span><kbd>Click 3D Face</kbd> Drop Seed</span>
                 <span><kbd>Space</kbd> Resolve</span>
+                <span><kbd>V</kbd> Colored 3D Mode</span>
                 <span><kbd>Enter</kbd> Save & Next</span>
                 <span><kbd>R</kbd> Random Cube</span>
                 <span><kbd>F</kbd> Focus Active Fiber Crop</span>
@@ -1543,6 +1592,9 @@ HTML_TEMPLATE = r"""
         let latestResolvedCurves = {};
         let rawPointCloudFull = [];
         let currentPointDensity = 40;
+        let currentRenderMode = 'annotate'; // 'annotate' or 'colored3d'
+        let latestColoredVoxels = [];
+        let coloredVolumeMesh = null;
 
         // Visual Crop State (Always active)
         let cropState = {
@@ -1875,6 +1927,9 @@ HTML_TEMPLATE = r"""
             updateThreeCropBoxGeometry(cropState.z_min, cropState.z_max, cropState.y_min, cropState.y_max, cropState.x_min, cropState.x_max);
             updateThreePointCloud();
             updateThreeSeeds();
+            if (latestColoredVoxels && latestColoredVoxels.length > 0) {
+                updateColoredVolumePointCloud();
+            }
 
             if (cropDebounceTimer) clearTimeout(cropDebounceTimer);
 
@@ -2254,6 +2309,7 @@ HTML_TEMPLATE = r"""
             }
 
             updateThreeCurvesClipping();
+            updateColoredVolumeClipping();
             updateThreeAxesPosition();
         }
 
@@ -2286,9 +2342,13 @@ HTML_TEMPLATE = r"""
             const tag = document.getElementById('val-point-density');
             if (tag) tag.innerText = `${currentPointDensity}%`;
             updateThreePointCloud();
+            if (latestColoredVoxels && latestColoredVoxels.length > 0) {
+                updateColoredVolumePointCloud();
+            }
         }
 
         function handleThreeFaceClick(event) {
+            if (currentRenderMode === 'colored3d') return; // In colored 3D mode, notes are hidden and face clicks disabled
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -2530,13 +2590,22 @@ HTML_TEMPLATE = r"""
             const targetCount = Math.max(1, Math.round(inCrop.length * fraction));
 
             const positions = new Float32Array(targetCount * 3);
-            const stride = inCrop.length / targetCount;
-            for (let i = 0; i < targetCount; i++) {
-                const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
-                const pt = inCrop[srcIdx];
-                positions[i * 3] = pt[2];     // X = x
-                positions[i * 3 + 1] = pt[1]; // Y = y
-                positions[i * 3 + 2] = pt[0]; // Z = z
+            if (targetCount === inCrop.length) {
+                for (let i = 0; i < targetCount; i++) {
+                    const pt = inCrop[i];
+                    positions[i * 3]     = pt[2]; // X = x
+                    positions[i * 3 + 1] = pt[1]; // Y = y
+                    positions[i * 3 + 2] = pt[0]; // Z = z
+                }
+            } else {
+                const stride = inCrop.length / targetCount;
+                for (let i = 0; i < targetCount; i++) {
+                    const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
+                    const pt = inCrop[srcIdx];
+                    positions[i * 3]     = pt[2]; // X = x
+                    positions[i * 3 + 1] = pt[1]; // Y = y
+                    positions[i * 3 + 2] = pt[0]; // Z = z
+                }
             }
 
             const geo = new THREE.BufferGeometry();
@@ -2544,15 +2613,170 @@ HTML_TEMPLATE = r"""
 
             const mat = new THREE.PointsMaterial({
                 color: 0x00e5ff,
-                size: 2.2,
+                size: (fraction >= 1.0) ? 2.4 : 2.2,
                 transparent: true,
                 opacity: Math.min(0.85, 0.35 + fraction * 0.35),
                 blending: THREE.AdditiveBlending,
                 depthWrite: false
             });
             pointCloudMesh = new THREE.Points(geo, mat);
-            pointCloudMesh.visible = (currentPointDensity > 0);
+            pointCloudMesh.visible = (currentRenderMode !== 'colored3d' && currentPointDensity > 0);
             scene.add(pointCloudMesh);
+        }
+
+        function updateColoredVolumePointCloud(voxels) {
+            if (voxels !== undefined) latestColoredVoxels = voxels || [];
+
+            if (coloredVolumeMesh) {
+                scene.remove(coloredVolumeMesh);
+                if (coloredVolumeMesh.geometry) coloredVolumeMesh.geometry.dispose();
+                if (coloredVolumeMesh.material) coloredVolumeMesh.material.dispose();
+                coloredVolumeMesh = null;
+            }
+
+            if (!latestColoredVoxels || latestColoredVoxels.length === 0) return;
+
+            const z0 = cropState.z_min;
+            const z1 = cropState.z_max;
+            const y0 = cropState.y_min;
+            const y1 = cropState.y_max;
+            const x0 = cropState.x_min;
+            const x1 = cropState.x_max;
+
+            const inCrop = latestColoredVoxels.filter(p => 
+                p[0] >= z0 && p[0] <= z1 &&
+                p[1] >= y0 && p[1] <= y1 &&
+                p[2] >= x0 && p[2] <= x1
+            );
+
+            if (inCrop.length === 0) return;
+
+            const fraction = Math.max(0.01, Math.min(1.0, currentPointDensity / 100.0));
+            const targetCount = Math.max(1, Math.round(inCrop.length * fraction));
+
+            const positions = new Float32Array(targetCount * 3);
+            const colors = new Float32Array(targetCount * 3);
+
+            if (targetCount === inCrop.length) {
+                for (let i = 0; i < targetCount; i++) {
+                    const pt = inCrop[i]; // [z, y, x, fid]
+                    positions[i * 3]     = pt[2]; // X = x
+                    positions[i * 3 + 1] = pt[1]; // Y = y
+                    positions[i * 3 + 2] = pt[0]; // Z = z
+
+                    const fid = pt[3] || 1;
+                    const hexStr = COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length] || '#00e5ff';
+                    const c = new THREE.Color(hexStr);
+                    colors[i * 3]     = c.r;
+                    colors[i * 3 + 1] = c.g;
+                    colors[i * 3 + 2] = c.b;
+                }
+            } else {
+                const stride = inCrop.length / targetCount;
+                for (let i = 0; i < targetCount; i++) {
+                    const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
+                    const pt = inCrop[srcIdx]; // [z, y, x, fid]
+                    positions[i * 3]     = pt[2]; // X = x
+                    positions[i * 3 + 1] = pt[1]; // Y = y
+                    positions[i * 3 + 2] = pt[0]; // Z = z
+
+                    const fid = pt[3] || 1;
+                    const hexStr = COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length] || '#00e5ff';
+                    const c = new THREE.Color(hexStr);
+                    colors[i * 3]     = c.r;
+                    colors[i * 3 + 1] = c.g;
+                    colors[i * 3 + 2] = c.b;
+                }
+            }
+
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const mat = new THREE.PointsMaterial({
+                vertexColors: true,
+                size: 2.8,
+                sizeAttenuation: true,
+                transparent: false,
+                opacity: 1.0,
+                depthTest: true,
+                depthWrite: true,
+                clippingPlanes: getCropClippingPlanes(),
+                clipShadows: true
+            });
+
+            coloredVolumeMesh = new THREE.Points(geo, mat);
+            coloredVolumeMesh.visible = (currentRenderMode === 'colored3d');
+            scene.add(coloredVolumeMesh);
+        }
+
+        function updateColoredVolumeClipping() {
+            if (!coloredVolumeMesh || !coloredVolumeMesh.material) return;
+            coloredVolumeMesh.material.clippingPlanes = getCropClippingPlanes();
+            coloredVolumeMesh.material.clipShadows = true;
+            coloredVolumeMesh.material.needsUpdate = true;
+        }
+
+        async function setRenderMode(mode) {
+            currentRenderMode = mode;
+            const btnAnn = document.getElementById('btn-mode-annotate');
+            const btnCol = document.getElementById('btn-mode-colored3d');
+            const overlayHint = document.getElementById('three-overlay-hint');
+
+            if (mode === 'colored3d') {
+                if (btnAnn) btnAnn.classList.remove('active');
+                if (btnCol) btnCol.classList.add('active');
+
+                // In this mode, only colored 3D is shown and notes are hidden
+                if (seedPinsGroup) seedPinsGroup.visible = false;
+                if (curves3DGroup) curves3DGroup.visible = false;
+                faceMeshes.forEach(m => m.visible = false);
+                if (pointCloudMesh) pointCloudMesh.visible = false;
+
+                // If no colored voxels yet but seeds are placed, resolve them
+                if ((!latestColoredVoxels || latestColoredVoxels.length === 0) && seedsList.length > 0) {
+                    await resolveConnections();
+                } else if (!latestColoredVoxels || latestColoredVoxels.length === 0) {
+                    try {
+                        const res = await fetch('/api/patch/colored');
+                        const data = await res.json();
+                        if (data.colored_voxels && data.colored_voxels.length > 0) {
+                            updateColoredVolumePointCloud(data.colored_voxels);
+                        }
+                    } catch (e) {
+                        console.error("Failed to load colored volume:", e);
+                    }
+                }
+
+                if (coloredVolumeMesh) {
+                    coloredVolumeMesh.visible = true;
+                }
+                if (overlayHint) {
+                    overlayHint.innerHTML = '🎨 <strong>Resulting Colored 3D TIFF Mode</strong> (Notes Hidden) | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom | <strong>V</strong>: Annotate';
+                }
+                setPerfStatus('🎨 Mode: Resulting Colored 3D TIFF (Notes Hidden)');
+            } else {
+                if (btnAnn) btnAnn.classList.add('active');
+                if (btnCol) btnCol.classList.remove('active');
+
+                // Restore annotation mode: seeds/notes, centerlines, faces, and raw points
+                if (seedPinsGroup) seedPinsGroup.visible = true;
+                if (curves3DGroup) curves3DGroup.visible = true;
+                faceMeshes.forEach(m => m.visible = true);
+                if (pointCloudMesh) pointCloudMesh.visible = (currentPointDensity > 0);
+
+                if (coloredVolumeMesh) {
+                    coloredVolumeMesh.visible = false;
+                }
+                if (overlayHint) {
+                    overlayHint.innerHTML = '🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom';
+                }
+                setPerfStatus('✏️ Mode: Annotation & Seeds');
+            }
+        }
+
+        function toggleRenderMode() {
+            setRenderMode(currentRenderMode === 'annotate' ? 'colored3d' : 'annotate');
         }
 
         let currentlyLoadedPatchIndex = null;
@@ -2687,6 +2911,14 @@ HTML_TEMPLATE = r"""
                 updateThreeSeeds();
                 updateSeedsDock();
                 initIdSelector();
+                if (data.colored_voxels) {
+                    updateColoredVolumePointCloud(data.colored_voxels);
+                } else {
+                    updateColoredVolumePointCloud([]);
+                }
+                if (currentRenderMode === 'colored3d') {
+                    setRenderMode('colored3d');
+                }
             } catch (err) {
                 console.error("Failed to load coordinates:", err);
                 setPerfStatus('❌ Error loading coordinates: ' + (err.message || err));
@@ -2732,6 +2964,14 @@ HTML_TEMPLATE = r"""
                 updateThreeSeeds();
                 updateSeedsDock();
                 initIdSelector();
+                if (data.colored_voxels) {
+                    updateColoredVolumePointCloud(data.colored_voxels);
+                } else {
+                    updateColoredVolumePointCloud([]);
+                }
+                if (currentRenderMode === 'colored3d') {
+                    setRenderMode('colored3d');
+                }
             } catch (err) {
                 console.error("Failed to load saved patch:", err);
                 setPerfStatus('❌ Error loading saved patch: ' + (err.message || err));
@@ -2795,6 +3035,14 @@ HTML_TEMPLATE = r"""
                 updateThreeSeeds();
                 updateSeedsDock();
                 initIdSelector();
+                if (data.colored_voxels) {
+                    updateColoredVolumePointCloud(data.colored_voxels);
+                } else {
+                    updateColoredVolumePointCloud([]);
+                }
+                if (currentRenderMode === 'colored3d') {
+                    setRenderMode('colored3d');
+                }
             } catch (err) {
                 console.error("Failed to fetch patch:", err);
                 setPerfStatus('❌ Error fetching patch: ' + (err.message || err));
@@ -2807,6 +3055,7 @@ HTML_TEMPLATE = r"""
             updateThreeSeeds();
             updateSeedsDock();
             renderThree3DCurves(null);
+            updateColoredVolumePointCloud([]);
             initIdSelector();
         }
 
@@ -2895,6 +3144,12 @@ HTML_TEMPLATE = r"""
                     document.getElementById('perf-badge').innerText = `⚡ Resolved ${data.num_fibers} Fibers in ${data.resolve_time_ms} ms!`;
                     updateSidebarInfo(undefined, undefined, undefined, `Resolved ${data.num_fibers} Fibers (${data.resolve_time_ms} ms)`);
                     renderThree3DCurves(data.curves_3d);
+                    if (data.colored_voxels) {
+                        updateColoredVolumePointCloud(data.colored_voxels);
+                    }
+                    if (currentRenderMode === 'colored3d') {
+                        setRenderMode('colored3d');
+                    }
                 }
             } catch (err) {
                 console.error("Resolution failed:", err);
@@ -3040,6 +3295,14 @@ HTML_TEMPLATE = r"""
             updateThreeSeeds();
             updateSeedsDock();
             initIdSelector();
+            if (data.colored_voxels) {
+                updateColoredVolumePointCloud(data.colored_voxels);
+            } else {
+                updateColoredVolumePointCloud([]);
+            }
+            if (currentRenderMode === 'colored3d') {
+                setRenderMode('colored3d');
+            }
         }
 
         async function handleBrowserFileSelect(input) {
@@ -3158,6 +3421,8 @@ HTML_TEMPLATE = r"""
                 focusActiveFiberCrop();
             } else if (e.key === 'c' || e.key === 'C') {
                 resetCrop();
+            } else if (e.key === 'v' || e.key === 'V' || e.key === 'm' || e.key === 'M') {
+                toggleRenderMode();
             } else if (e.key >= '1' && e.key <= '9') {
                 setActiveId(parseInt(e.key));
             } else if (e.key === '0') {
@@ -3307,6 +3572,14 @@ def api_resolve():
     crop_bounds = data.get('crop_bounds')
     res = engine.resolve_connections(seeds, crop_bounds=crop_bounds)
     return jsonify(res)
+
+@app.route('/api/patch/colored', methods=['GET', 'POST'])
+def api_patch_colored():
+    try:
+        colored_data = engine.get_colored_volume_data()
+        return jsonify(colored_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/api/save', methods=['POST'])
 def api_save():

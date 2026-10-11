@@ -358,13 +358,16 @@ class RealDataCurationEngine:
                 patch_info['loaded_seeds'] = extracted_seeds
                 patch_info['curves_3d'] = res['curves_3d']
                 patch_info['num_fibers'] = res['num_fibers']
+                patch_info['colored_voxels'] = res.get('colored_voxels', [])
                 patch_info['is_segmented_source'] = True
             else:
                 patch_info['loaded_seeds'] = []
                 patch_info['curves_3d'] = {}
                 patch_info['num_fibers'] = 0
+                patch_info['colored_voxels'] = []
                 patch_info['is_segmented_source'] = True
         else:
+            patch_info['colored_voxels'] = []
             patch_info['is_segmented_source'] = False
 
         patch_info['source_info'] = getattr(self, 'current_source_info', {
@@ -537,16 +540,20 @@ class RealDataCurationEngine:
             rgba[~mask] = [15, 18, 28, 20]
             face_imgs_rgba[name] = self._array_to_png_base64(rgba)
 
-        # Cropped Surface Point Cloud
+        # Cropped 3D Point Cloud (surface/border shell voxels only up to 250,000)
         from scipy.ndimage import binary_erosion
-        surf = self.current_patch_bin & ~binary_erosion(self.current_patch_bin)
-        sub_surf = np.zeros_like(surf, dtype=bool)
-        sub_surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = surf[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
-        vox_coords = np.argwhere(sub_surf)
-        if len(vox_coords) > 24000:
-            sub_idx = np.random.choice(len(vox_coords), size=24000, replace=False)
-            vox_coords = vox_coords[sub_idx]
-        point_cloud = vox_coords.tolist()
+        sub_fg = np.zeros_like(self.current_patch_bin, dtype=bool)
+        sub_fg[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = self.current_patch_bin[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
+        surf = sub_fg & ~binary_erosion(sub_fg, border_value=0)
+        surf_coords = np.argwhere(surf)
+        max_pts = 250000
+
+        if len(surf_coords) > max_pts:
+            sub_idx = np.random.choice(len(surf_coords), size=max_pts, replace=False)
+            all_coords = surf_coords[sub_idx]
+        else:
+            all_coords = surf_coords
+        point_cloud = all_coords.tolist()
 
         return {
             'crop_bounds': [z_min, z_max, y_min, y_max, x_min, x_max],
@@ -933,11 +940,61 @@ class RealDataCurationEngine:
             'resolve_time_ms': round(resolve_time * 1000, 1)
         }
 
+        colored_data = self.get_colored_volume_data()
+
         return {
             'success': True,
             'num_fibers': len(resolved_curves),
             'resolve_time_ms': round(resolve_time * 1000, 1),
-            'curves_3d': curves_3d_json
+            'curves_3d': curves_3d_json,
+            'colored_voxels': colored_data['colored_voxels'],
+            'total_colored_voxels': colored_data['total_voxels']
+        }
+
+    def get_colored_volume_data(self, max_voxels=250000):
+        """
+        Extracts 3D colored surface/border voxels from the resulting instance volume (inst_vol)
+        produced by applying and resolving the placed seeds/notes.
+        Only boundary voxels (touching background, volume outer boundaries, or adjacent fibers)
+        are extracted; internal occluded voxels are omitted for maximum rendering efficiency.
+        Returns a dictionary with 'colored_voxels': [[z, y, x, fiber_id], ...],
+        'total_voxels', and 'num_fibers'.
+        """
+        if self.current_resolution is None or 'inst_vol' not in self.current_resolution:
+            return {'colored_voxels': [], 'num_fibers': 0, 'total_voxels': 0}
+
+        inst_vol = self.current_resolution['inst_vol']
+        fg_mask = (inst_vol > 0)
+        if not np.any(fg_mask):
+            return {'colored_voxels': [], 'num_fibers': 0, 'total_voxels': 0}
+
+        # 6-connectivity boundary detection accounting for background, fiber interfaces, and volume borders
+        padded = np.pad(inst_vol, 1, mode='constant', constant_values=0)
+        diff_z0 = (inst_vol != padded[:-2, 1:-1, 1:-1])
+        diff_z1 = (inst_vol != padded[2:, 1:-1, 1:-1])
+        diff_y0 = (inst_vol != padded[1:-1, :-2, 1:-1])
+        diff_y1 = (inst_vol != padded[1:-1, 2:, 1:-1])
+        diff_x0 = (inst_vol != padded[1:-1, 1:-1, :-2])
+        diff_x1 = (inst_vol != padded[1:-1, 1:-1, 2:])
+        border = (diff_z0 | diff_z1 | diff_y0 | diff_y1 | diff_x0 | diff_x1) & fg_mask
+
+        border_coords = np.argwhere(border)
+        if len(border_coords) == 0:
+            return {'colored_voxels': [], 'num_fibers': 0, 'total_voxels': 0}
+
+        if len(border_coords) > max_voxels:
+            sub_idx = np.random.choice(len(border_coords), size=max_voxels, replace=False)
+            all_coords = border_coords[sub_idx]
+        else:
+            all_coords = border_coords
+
+        fids = inst_vol[all_coords[:, 0], all_coords[:, 1], all_coords[:, 2]]
+        colored_voxels = np.column_stack([all_coords, fids]).astype(int).tolist()
+
+        return {
+            'colored_voxels': colored_voxels,
+            'num_fibers': int(self.current_resolution.get('num_fibers', 0)),
+            'total_voxels': int(len(border_coords))
         }
 
     def _snap_to_foreground(self, pt, search_radius=6):
@@ -1125,6 +1182,7 @@ class RealDataCurationEngine:
         patch_data['loaded_seeds'] = seeds
         patch_data['curves_3d'] = res['curves_3d']
         patch_data['num_fibers'] = res['num_fibers']
+        patch_data['colored_voxels'] = res.get('colored_voxels', [])
         return patch_data
 
     def save_current_curated_sample(self, overwrite=False):
@@ -1366,14 +1424,19 @@ class RealDataCurationEngine:
         self.current_seeds = []
         self.current_resolution = None
 
-        # Extract true 3D surface voxels of fibers for 3D volume rendering
+        # Extract 3D voxels of fibers for 3D volume rendering (surface shell voxels only up to 250,000)
         from scipy.ndimage import binary_erosion
-        surf = self.current_patch_bin & ~binary_erosion(self.current_patch_bin)
-        vox_coords = np.argwhere(surf)
-        if len(vox_coords) > 24000:
-            sub_idx = np.random.choice(len(vox_coords), size=24000, replace=False)
-            vox_coords = vox_coords[sub_idx]
-        point_cloud = vox_coords.tolist()
+        fg = self.current_patch_bin
+        surf = fg & ~binary_erosion(fg, border_value=0)
+        surf_coords = np.argwhere(surf)
+        max_pts = 250000
+
+        if len(surf_coords) > max_pts:
+            sub_idx = np.random.choice(len(surf_coords), size=max_pts, replace=False)
+            all_coords = surf_coords[sub_idx]
+        else:
+            all_coords = surf_coords
+        point_cloud = all_coords.tolist()
 
         face_imgs, face_imgs_rgba = self.get_face_images_base64()
 
@@ -1386,5 +1449,6 @@ class RealDataCurationEngine:
             'face_images': face_imgs,
             'face_images_rgba': face_imgs_rgba,
             'point_cloud': point_cloud,
+            'colored_voxels': [],
             'curated_total': self.patch_counter
         }

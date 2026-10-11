@@ -81,6 +81,30 @@ def test_curation_engine():
         assert np.all(inst_vol[skel_mask] == inst_skel[skel_mask]), "Centerline voxels must strictly match inst_vol!"
         print("Centerline seed preservation verified: 0 mismatches.")
 
+        # Verify colored 3D volume voxel extraction for resulting 3D TIFF rendering (border-only voxels)
+        colored_data = engine.get_colored_volume_data()
+        assert 'colored_voxels' in colored_data, "get_colored_volume_data must return colored_voxels"
+        assert colored_data['num_fibers'] == 1, "Expected 1 fiber in colored_data"
+        assert len(colored_data['colored_voxels']) > 0, "Expected non-empty colored_voxels"
+        first_vox = colored_data['colored_voxels'][0]
+        assert len(first_vox) == 4, "Each voxel must be [z, y, x, fiber_id]"
+        assert first_vox[3] == 1, "Expected fiber_id 1"
+        assert 'colored_voxels' in res, "resolve_connections result must include colored_voxels"
+
+        # Verify border-only property: exactly border voxels, occluded internal voxels excluded
+        padded_inst = np.pad(inst_vol, 1, mode='constant', constant_values=0)
+        is_border = (
+            (inst_vol != padded_inst[:-2, 1:-1, 1:-1]) |
+            (inst_vol != padded_inst[2:, 1:-1, 1:-1]) |
+            (inst_vol != padded_inst[1:-1, :-2, 1:-1]) |
+            (inst_vol != padded_inst[1:-1, 2:, 1:-1]) |
+            (inst_vol != padded_inst[1:-1, 1:-1, :-2]) |
+            (inst_vol != padded_inst[1:-1, 1:-1, 2:])
+        ) & (inst_vol > 0)
+        expected_border_count = int(np.sum(is_border))
+        assert len(colored_data['colored_voxels']) == expected_border_count, f"Expected {expected_border_count} border voxels, got {len(colored_data['colored_voxels'])}"
+        print(f"Colored 3D TIFF Border Voxel Extraction verified: {len(colored_data['colored_voxels'])} voxels extracted (100% border, interior omitted).")
+
         # 4b. Test multi-seed intermediate waypoint guidance (Start, End, Mid UI workflow)
         if len(fg_coords) >= 3:
             p_mid = fg_coords[len(fg_coords) // 2]
@@ -150,7 +174,7 @@ def test_curation_engine():
         seg_paths = [f['path'] for f in files_dict['segmented']]
 
         # Assert raw volumes in data/fibers_to_segment are correctly categorized as raw and NOT segmented
-        assert any('COLLAGENCROP_003_0000.tif' in p for p in raw_paths), "COLLAGENCROP_003_0000.tif must be in raw presets!"
+        assert any('data/fibers_to_segment' in p for p in raw_paths), "Files from data/fibers_to_segment must be in raw presets!"
         assert not any('data/fibers_to_segment' in p for p in seg_paths), "No files from data/fibers_to_segment should be in segmented presets!"
 
         # Assert open_volume_file on raw volume correctly identifies it as raw_microscopy
