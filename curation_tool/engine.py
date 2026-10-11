@@ -540,20 +540,23 @@ class RealDataCurationEngine:
             rgba[~mask] = [15, 18, 28, 20]
             face_imgs_rgba[name] = self._array_to_png_base64(rgba)
 
-        # Cropped 3D Point Cloud (surface/border shell voxels only up to 250,000)
-        from scipy.ndimage import binary_erosion
-        sub_fg = np.zeros_like(self.current_patch_bin, dtype=bool)
-        sub_fg[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1] = self.current_patch_bin[z_min:z_max+1, y_min:y_max+1, x_min:x_max+1]
-        surf = sub_fg & ~binary_erosion(sub_fg, border_value=0)
-        surf_coords = np.argwhere(surf)
-        max_pts = 250000
-
-        if len(surf_coords) > max_pts:
-            sub_idx = np.random.choice(len(surf_coords), size=max_pts, replace=False)
-            all_coords = surf_coords[sub_idx]
+        # Cropped 3D Point Cloud (filtered from the deterministic patch border coords)
+        if hasattr(self, 'current_patch_border_coords') and len(self.current_patch_border_coords) > 0:
+            coords = self.current_patch_border_coords
+            in_crop = (
+                (coords[:, 0] >= z_min) & (coords[:, 0] <= z_max) &
+                (coords[:, 1] >= y_min) & (coords[:, 1] <= y_max) &
+                (coords[:, 2] >= x_min) & (coords[:, 2] <= x_max)
+            )
+            crop_coords = coords[in_crop]
+            if self.current_resolution is not None and 'inst_vol' in self.current_resolution:
+                inst_vol = self.current_resolution['inst_vol']
+                fids = inst_vol[crop_coords[:, 0], crop_coords[:, 1], crop_coords[:, 2]]
+            else:
+                fids = np.zeros(len(crop_coords), dtype=np.int32)
+            point_cloud = np.column_stack([crop_coords, fids]).astype(int).tolist()
         else:
-            all_coords = surf_coords
-        point_cloud = all_coords.tolist()
+            point_cloud = []
 
         return {
             'crop_bounds': [z_min, z_max, y_min, y_max, x_min, x_max],
@@ -699,9 +702,15 @@ class RealDataCurationEngine:
         resolved_waypoints = {}
         inst_skel = np.zeros((S, S, S), dtype=np.uint16)
 
-        # Build dynamic cost tensor (1 / EDT^2)
-        base_cost = 1.0 / (self.current_dt**2 + 1e-4)
-        dynamic_cost = np.ascontiguousarray(base_cost.copy(), dtype=np.float64)
+        # Build dynamic cost tensor:
+        # - Inside foreground fiber: strong attraction to distance ridge (approx 0.1 to 2.5)
+        # - Empty space / background: moderate jump cost (8.0) so the router willingly bridges
+        #   broken fiber segments, faint gaps, and empty spaces between user nodes.
+        empty_space_cost = 8.0
+        fg_mask = (self.current_dt > 0)
+        base_cost = np.full_like(self.current_dt, empty_space_cost, dtype=np.float64)
+        base_cost[fg_mask] = 1.0 / (self.current_dt[fg_mask]**2 + 0.1)
+        dynamic_cost = np.ascontiguousarray(base_cost, dtype=np.float64)
 
         fiber_groups = {}
         for s in seeds:
@@ -799,19 +808,15 @@ class RealDataCurationEngine:
                     p1 = tuple(int(c) for c in s1['pos3d'])
                     p2 = tuple(int(c) for c in s2['pos3d'])
 
-                    p1_snapped = self._snap_to_foreground(p1)
-                    p2_snapped = self._snap_to_foreground(p2)
+                    if k > 0:
+                        snapped_waypoints.append(np.array(p1, dtype=np.float32))
 
-                    if k > 0 and p1_snapped is not None:
-                        snapped_waypoints.append(np.array(p1_snapped, dtype=np.float32))
-
-                    if p1_snapped is not None and p2_snapped is not None:
-                        path = self._route_fiber_lane_guided(p1_snapped, p2_snapped, dynamic_cost)
-                        if len(path) > 0:
-                            if len(sub_paths) > 0 and np.array_equal(sub_paths[-1][-1], path[0]):
-                                sub_paths.append(path[1:])
-                            else:
-                                sub_paths.append(path)
+                    path = self._route_fiber_lane_guided(p1, p2, dynamic_cost)
+                    if len(path) > 0:
+                        if len(sub_paths) > 0 and np.array_equal(sub_paths[-1][-1], path[0]):
+                            sub_paths.append(path[1:])
+                        else:
+                            sub_paths.append(path)
 
                 if len(sub_paths) > 0:
                     full_curve = np.concatenate(sub_paths, axis=0)
@@ -825,15 +830,13 @@ class RealDataCurationEngine:
                 # Singleton / terminating fiber: trace inward along DT ridge
                 s = seed_list[0]
                 p_start = tuple(int(c) for c in s['pos3d'])
-                p_snapped = self._snap_to_foreground(p_start)
-                if p_snapped is not None:
-                    path_arr = self._trace_terminating_fiber(p_snapped)
-                    if len(path_arr) > 0:
-                        resolved_curves[fid] = path_arr
-                        curves_3d_json[fid] = path_arr.tolist()
+                path_arr = self._trace_terminating_fiber(p_start)
+                if len(path_arr) > 0:
+                    resolved_curves[fid] = path_arr
+                    curves_3d_json[fid] = path_arr.tolist()
 
-                        for pt in path_arr.astype(int):
-                            dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
+                    for pt in path_arr.astype(int):
+                        dynamic_cost[pt[0], pt[1], pt[2]] += 2.0
 
         # Multi-Label 3D Connected-Component Voronoi Diffusion & Target Generation
         inst_vol = np.zeros((S, S, S), dtype=np.uint16)
@@ -941,15 +944,40 @@ class RealDataCurationEngine:
         }
 
         colored_data = self.get_colored_volume_data()
+        patch_point_cloud = self.get_patch_point_cloud()
 
         return {
             'success': True,
             'num_fibers': len(resolved_curves),
             'resolve_time_ms': round(resolve_time * 1000, 1),
             'curves_3d': curves_3d_json,
+            'point_cloud': patch_point_cloud,
             'colored_voxels': colored_data['colored_voxels'],
             'total_colored_voxels': colored_data['total_voxels']
         }
+
+    def get_patch_point_cloud(self, max_pts=250000):
+        """
+        Extracts 3D surface shell voxels of the current patch with fiber instance IDs directly assigned:
+        - Points coordinates (Z, Y, X) are strictly deterministic and fixed for the patch lifetime.
+        - Assigned fiber voxels have fiber_id > 0 (1, 2, ...).
+        - Unassigned foreground fiber voxels have fiber_id = 0.
+        Voxels never shift, reroll, or change positions between recomputes/resolves.
+        """
+        if not hasattr(self, 'current_patch_border_coords') or len(self.current_patch_border_coords) == 0:
+            return []
+
+        all_coords = self.current_patch_border_coords
+        if len(all_coords) > max_pts:
+            all_coords = all_coords[:max_pts]
+
+        if self.current_resolution is not None and 'inst_vol' in self.current_resolution:
+            inst_vol = self.current_resolution['inst_vol']
+            fids = inst_vol[all_coords[:, 0], all_coords[:, 1], all_coords[:, 2]]
+        else:
+            fids = np.zeros(len(all_coords), dtype=np.int32)
+
+        return np.column_stack([all_coords, fids]).astype(int).tolist()
 
     def get_colored_volume_data(self, max_voxels=250000):
         """
@@ -983,8 +1011,9 @@ class RealDataCurationEngine:
             return {'colored_voxels': [], 'num_fibers': 0, 'total_voxels': 0}
 
         if len(border_coords) > max_voxels:
-            sub_idx = np.random.choice(len(border_coords), size=max_voxels, replace=False)
-            all_coords = border_coords[sub_idx]
+            rng = np.random.RandomState(42)
+            perm = rng.permutation(len(border_coords))[:max_voxels]
+            all_coords = border_coords[perm]
         else:
             all_coords = border_coords
 
@@ -996,25 +1025,6 @@ class RealDataCurationEngine:
             'num_fibers': int(self.current_resolution.get('num_fibers', 0)),
             'total_voxels': int(len(border_coords))
         }
-
-    def _snap_to_foreground(self, pt, search_radius=6):
-        S = self.cube_size
-        z = max(0, min(S - 1, int(pt[0])))
-        y = max(0, min(S - 1, int(pt[1])))
-        x = max(0, min(S - 1, int(pt[2])))
-
-        if self.current_patch_bin[z, y, x]:
-            return (z, y, x)
-
-        z1, z2 = max(0, z - search_radius), min(S, z + search_radius + 1)
-        y1, y2 = max(0, y - search_radius), min(S, y + search_radius + 1)
-        x1, x2 = max(0, x - search_radius), min(S, x + search_radius + 1)
-
-        sub_dt = self.current_dt[z1:z2, y1:y2, x1:x2]
-        if np.any(sub_dt > 0):
-            max_idx = np.unravel_index(np.argmax(sub_dt), sub_dt.shape)
-            return (z1 + max_idx[0], y1 + max_idx[1], x1 + max_idx[2])
-        return (z, y, x)
 
     def _route_fiber_lane_guided(self, p1, p2, dynamic_cost, perpendicular_weight=0.20):
         """
@@ -1182,6 +1192,7 @@ class RealDataCurationEngine:
         patch_data['loaded_seeds'] = seeds
         patch_data['curves_3d'] = res['curves_3d']
         patch_data['num_fibers'] = res['num_fibers']
+        patch_data['point_cloud'] = res.get('point_cloud', patch_data.get('point_cloud', []))
         patch_data['colored_voxels'] = res.get('colored_voxels', [])
         return patch_data
 
@@ -1424,19 +1435,33 @@ class RealDataCurationEngine:
         self.current_seeds = []
         self.current_resolution = None
 
-        # Extract 3D voxels of fibers for 3D volume rendering (surface shell voxels only up to 250,000)
-        from scipy.ndimage import binary_erosion
-        fg = self.current_patch_bin
-        surf = fg & ~binary_erosion(fg, border_value=0)
-        surf_coords = np.argwhere(surf)
-        max_pts = 250000
-
-        if len(surf_coords) > max_pts:
-            sub_idx = np.random.choice(len(surf_coords), size=max_pts, replace=False)
-            all_coords = surf_coords[sub_idx]
+        # Extract surface/border shell voxels of the raw patch geometry once deterministically
+        fg = self.current_patch_bin > 0
+        if np.any(fg):
+            padded = np.pad(fg, 1, mode='constant', constant_values=False)
+            diff = (
+                (fg != padded[:-2, 1:-1, 1:-1]) |
+                (fg != padded[2:, 1:-1, 1:-1]) |
+                (fg != padded[1:-1, :-2, 1:-1]) |
+                (fg != padded[1:-1, 2:, 1:-1]) |
+                (fg != padded[1:-1, 1:-1, :-2]) |
+                (fg != padded[1:-1, 1:-1, 2:])
+            ) & fg
+            b_coords = np.argwhere(diff)
+            # Deterministic pseudo-random permutation with fixed seed 42
+            # Ensures points at any density prefix (e.g. 10%, 40%, 100%) are uniformly spread across the cube
+            rng = np.random.RandomState(42)
+            max_pts = 250000
+            if len(b_coords) > max_pts:
+                perm = rng.permutation(len(b_coords))[:max_pts]
+                self.current_patch_border_coords = b_coords[perm]
+            else:
+                self.current_patch_border_coords = b_coords[rng.permutation(len(b_coords))]
         else:
-            all_coords = surf_coords
-        point_cloud = all_coords.tolist()
+            self.current_patch_border_coords = np.empty((0, 3), dtype=np.int32)
+
+        # Extract 3D voxels of fibers for 3D volume rendering (deterministic surface shell voxels)
+        point_cloud = self.get_patch_point_cloud()
 
         face_imgs, face_imgs_rgba = self.get_face_images_base64()
 

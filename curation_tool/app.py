@@ -1421,14 +1421,10 @@ HTML_TEMPLATE = r"""
             <div class="stage-header">
                 <!-- Viewport Mode & Density Controls -->
                 <div class="toggles-cluster">
-                    <div class="render-mode-capsule" title="Toggle 3D Viewport Mode (Hotkey: V)">
-                        <button class="mode-capsule-btn active" id="btn-mode-annotate" onclick="setRenderMode('annotate')" title="Annotation Mode: Box faces, Seeds/Notes, and Centerlines [Hotkey: V]">
-                            ✏️ Annotate
-                        </button>
-                        <button class="mode-capsule-btn" id="btn-mode-colored3d" onclick="setRenderMode('colored3d')" title="Resulting Colored 3D Mode: Only colored 3D TIFF segmentation shown, notes hidden [Hotkey: V]">
-                            🎨 Colored 3D
-                        </button>
-                    </div>
+                    <label class="toggle-pill" id="pill-curves-nodes" title="Show / Hide 3D Centerline Curves and Seed Nodes [Hotkey: V]">
+                        <input type="checkbox" id="toggle-curves-nodes" checked onchange="toggleCurvesAndNodes(this.checked)">
+                        <span>📌 Curves & Nodes [V]</span>
+                    </label>
 
                     <label class="toggle-pill" title="Show / Hide 3D Coordinate Arrows next to the cube">
                         <input type="checkbox" id="toggle-axes-arrows" checked onchange="toggleAxesVisibility(this.checked)">
@@ -1466,14 +1462,14 @@ HTML_TEMPLATE = r"""
             <!-- 3D Interactive Box Viewport -->
             <div id="three-container">
                 <div class="three-overlay-hint" id="three-overlay-hint">
-                    🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom
+                    🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom | <strong>V</strong>: Curves & Nodes
                 </div>
             </div>
 
             <div class="shortcuts-hint">
                 <span><kbd>Click 3D Face</kbd> Drop Seed</span>
                 <span><kbd>Space</kbd> Resolve</span>
-                <span><kbd>V</kbd> Colored 3D Mode</span>
+                <span><kbd>V</kbd> Toggle Curves & Nodes</span>
                 <span><kbd>Enter</kbd> Save & Next</span>
                 <span><kbd>R</kbd> Random Cube</span>
                 <span><kbd>F</kbd> Focus Active Fiber Crop</span>
@@ -1767,7 +1763,7 @@ HTML_TEMPLATE = r"""
             if (fSeeds.length < 2) return;
 
             const sorted = sortFiberSeedsForCurve(fSeeds);
-            const controlPoints = sorted.map(s => new THREE.Vector3(s.pos3d[2], s.pos3d[1], s.pos3d[0]));
+            const controlPoints = sorted.map(s => new THREE.Vector3(s.pos3d[2] + 0.5, s.pos3d[1] + 0.5, s.pos3d[0] + 0.5));
 
             const oldMesh = curves3DGroup.children.find(c => c.userData && c.userData.fiberId === fid);
             if (oldMesh) {
@@ -2370,9 +2366,9 @@ HTML_TEMPLATE = r"""
                 const x0 = cropState.x_min;
                 const x1 = cropState.x_max;
 
-                let z = Math.max(z0, Math.min(z1, Math.round(pt.z)));
-                let y = Math.max(y0, Math.min(y1, Math.round(pt.y)));
-                let x = Math.max(x0, Math.min(x1, Math.round(pt.x)));
+                let z = Math.max(z0, Math.min(z1, Math.floor(pt.z)));
+                let y = Math.max(y0, Math.min(y1, Math.floor(pt.y)));
+                let x = Math.max(x0, Math.min(x1, Math.floor(pt.x)));
 
                 if (faceName === 'z_min') z = z0;
                 else if (faceName === 'z_max') z = z1;
@@ -2514,11 +2510,11 @@ HTML_TEMPLATE = r"""
                     opacity: 1.0
                 });
                 const pinMesh = new THREE.Mesh(pinGeo, pinMat);
-                pinMesh.position.set(x, y, z);
+                pinMesh.position.set(x + 0.5, y + 0.5, z + 0.5);
                 seedPinsGroup.add(pinMesh);
 
                 const sprite = createSeedSprite(s.fiber_id, colorHexStr);
-                sprite.position.set(x, y, z);
+                sprite.position.set(x + 0.5, y + 0.5, z + 0.5);
                 seedPinsGroup.add(sprite);
             });
         }
@@ -2539,7 +2535,7 @@ HTML_TEMPLATE = r"""
                 const fid = parseInt(fidStr);
                 const colorHex = parseInt(COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length].replace('#', '0x'));
 
-                const vectors = pts.map(p => new THREE.Vector3(p[2], p[1], p[0]));
+                const vectors = pts.map(p => new THREE.Vector3(p[2] + 0.5, p[1] + 0.5, p[0] + 0.5));
                 if (vectors.length >= 2) {
                     const curve = new THREE.CatmullRomCurve3(vectors, false, 'centripetal', 0.25);
                     const tubeGeo = new THREE.TubeGeometry(curve, Math.max(48, pts.length * 2), 1.3, 12, false);
@@ -2558,13 +2554,28 @@ HTML_TEMPLATE = r"""
             });
         }
 
+        const COLOR_UNASSIGNED_HEX = 0x78909c; // Distinct cool slate blue-gray for non-assigned voxels
+        const COLOR_UNASSIGNED = new THREE.Color(COLOR_UNASSIGNED_HEX);
+        const COLOR_CACHE = {};
+
+        function getVoxelColor(fid) {
+            if (!fid || fid <= 0) return COLOR_UNASSIGNED;
+            if (!COLOR_CACHE[fid]) {
+                const hexStr = COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length] || '#00e5ff';
+                COLOR_CACHE[fid] = new THREE.Color(hexStr);
+            }
+            return COLOR_CACHE[fid];
+        }
+
         function updateThreePointCloud(points) {
             if (points) rawPointCloudFull = points;
 
             if (pointCloudMesh) {
                 scene.remove(pointCloudMesh);
-                if (pointCloudMesh.geometry) pointCloudMesh.geometry.dispose();
-                if (pointCloudMesh.material) pointCloudMesh.material.dispose();
+                pointCloudMesh.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
                 pointCloudMesh = null;
             }
 
@@ -2577,6 +2588,7 @@ HTML_TEMPLATE = r"""
             const x0 = cropState.x_min;
             const x1 = cropState.x_max;
 
+            // 1. Filter voxels in the active crop region (maintains deterministic order)
             const inCrop = rawPointCloudFull.filter(p => 
                 p[0] >= z0 && p[0] <= z1 &&
                 p[1] >= y0 && p[1] <= y1 &&
@@ -2585,198 +2597,151 @@ HTML_TEMPLATE = r"""
 
             if (inCrop.length === 0) return;
 
-            // Continuous linear subsampling: scales point count strictly with currentPointDensity (1% to 100%)
+            // 2. Select displayed points strictly by percentage fraction from the deterministic list.
+            // Which voxels are shown is determined ONLY by percentage/crop change, NEVER re-rolled on recompute!
             const fraction = Math.max(0.01, Math.min(1.0, currentPointDensity / 100.0));
             const targetCount = Math.max(1, Math.round(inCrop.length * fraction));
+            const displayedPts = (targetCount >= inCrop.length) ? inCrop : inCrop.slice(0, targetCount);
 
-            const positions = new Float32Array(targetCount * 3);
-            if (targetCount === inCrop.length) {
-                for (let i = 0; i < targetCount; i++) {
-                    const pt = inCrop[i];
-                    positions[i * 3]     = pt[2]; // X = x
-                    positions[i * 3 + 1] = pt[1]; // Y = y
-                    positions[i * 3 + 2] = pt[0]; // Z = z
+            const planes = getCropClippingPlanes();
+            pointCloudMesh = new THREE.Group();
+
+            // 3. Partition displayed points into unassigned (fid <= 0) and assigned (fid > 0)
+            const unassignedPts = displayedPts.filter(p => !p[3] || p[3] <= 0);
+            const assignedPts = displayedPts.filter(p => p[3] && p[3] > 0);
+
+            // 4. Non-assigned pixels: distinct cool slate blue-gray, semi-transparent
+            if (unassignedPts.length > 0) {
+                const posUnassigned = new Float32Array(unassignedPts.length * 3);
+                for (let i = 0; i < unassignedPts.length; i++) {
+                    const pt = unassignedPts[i];
+                    posUnassigned[i * 3]     = pt[2] + 0.5; // X = col + 0.5
+                    posUnassigned[i * 3 + 1] = pt[1] + 0.5; // Y = row + 0.5
+                    posUnassigned[i * 3 + 2] = pt[0] + 0.5; // Z = slice + 0.5
                 }
-            } else {
-                const stride = inCrop.length / targetCount;
-                for (let i = 0; i < targetCount; i++) {
-                    const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
-                    const pt = inCrop[srcIdx];
-                    positions[i * 3]     = pt[2]; // X = x
-                    positions[i * 3 + 1] = pt[1]; // Y = y
-                    positions[i * 3 + 2] = pt[0]; // Z = z
-                }
+
+                const geoUnassigned = new THREE.BufferGeometry();
+                geoUnassigned.setAttribute('position', new THREE.BufferAttribute(posUnassigned, 3));
+
+                const matUnassigned = new THREE.PointsMaterial({
+                    color: COLOR_UNASSIGNED_HEX, // Distinct cool slate blue-gray
+                    size: (fraction >= 1.0) ? 2.3 : 2.0,
+                    sizeAttenuation: true,
+                    transparent: true,
+                    opacity: Math.min(0.65, 0.35 + fraction * 0.25),
+                    depthTest: true,
+                    depthWrite: false,
+                    clippingPlanes: planes,
+                    clipShadows: true
+                });
+
+                const unassignedMesh = new THREE.Points(geoUnassigned, matUnassigned);
+                pointCloudMesh.add(unassignedMesh);
             }
 
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            // 5. Assigned fiber pixels: solid vibrant colors directly applied
+            if (assignedPts.length > 0) {
+                const posAssigned = new Float32Array(assignedPts.length * 3);
+                const colAssigned = new Float32Array(assignedPts.length * 3);
 
-            const mat = new THREE.PointsMaterial({
-                color: 0x00e5ff,
-                size: (fraction >= 1.0) ? 2.4 : 2.2,
-                transparent: true,
-                opacity: Math.min(0.85, 0.35 + fraction * 0.35),
-                blending: THREE.AdditiveBlending,
-                depthWrite: false
-            });
-            pointCloudMesh = new THREE.Points(geo, mat);
-            pointCloudMesh.visible = (currentRenderMode !== 'colored3d' && currentPointDensity > 0);
+                for (let i = 0; i < assignedPts.length; i++) {
+                    const pt = assignedPts[i];
+                    posAssigned[i * 3]     = pt[2] + 0.5;
+                    posAssigned[i * 3 + 1] = pt[1] + 0.5;
+                    posAssigned[i * 3 + 2] = pt[0] + 0.5;
+
+                    const c = getVoxelColor(pt[3]);
+                    colAssigned[i * 3]     = c.r;
+                    colAssigned[i * 3 + 1] = c.g;
+                    colAssigned[i * 3 + 2] = c.b;
+                }
+
+                const geoAssigned = new THREE.BufferGeometry();
+                geoAssigned.setAttribute('position', new THREE.BufferAttribute(posAssigned, 3));
+                geoAssigned.setAttribute('color', new THREE.BufferAttribute(colAssigned, 3));
+
+                const matAssigned = new THREE.PointsMaterial({
+                    vertexColors: true,
+                    size: (fraction >= 1.0) ? 2.8 : 2.5,
+                    sizeAttenuation: true,
+                    transparent: false,
+                    opacity: 1.0,
+                    depthTest: true,
+                    depthWrite: true,
+                    clippingPlanes: planes,
+                    clipShadows: true
+                });
+
+                const assignedMesh = new THREE.Points(geoAssigned, matAssigned);
+                pointCloudMesh.add(assignedMesh);
+            }
+
+            pointCloudMesh.visible = (currentPointDensity > 0);
             scene.add(pointCloudMesh);
         }
 
         function updateColoredVolumePointCloud(voxels) {
-            if (voxels !== undefined) latestColoredVoxels = voxels || [];
-
-            if (coloredVolumeMesh) {
-                scene.remove(coloredVolumeMesh);
-                if (coloredVolumeMesh.geometry) coloredVolumeMesh.geometry.dispose();
-                if (coloredVolumeMesh.material) coloredVolumeMesh.material.dispose();
-                coloredVolumeMesh = null;
-            }
-
-            if (!latestColoredVoxels || latestColoredVoxels.length === 0) return;
-
-            const z0 = cropState.z_min;
-            const z1 = cropState.z_max;
-            const y0 = cropState.y_min;
-            const y1 = cropState.y_max;
-            const x0 = cropState.x_min;
-            const x1 = cropState.x_max;
-
-            const inCrop = latestColoredVoxels.filter(p => 
-                p[0] >= z0 && p[0] <= z1 &&
-                p[1] >= y0 && p[1] <= y1 &&
-                p[2] >= x0 && p[2] <= x1
-            );
-
-            if (inCrop.length === 0) return;
-
-            const fraction = Math.max(0.01, Math.min(1.0, currentPointDensity / 100.0));
-            const targetCount = Math.max(1, Math.round(inCrop.length * fraction));
-
-            const positions = new Float32Array(targetCount * 3);
-            const colors = new Float32Array(targetCount * 3);
-
-            if (targetCount === inCrop.length) {
-                for (let i = 0; i < targetCount; i++) {
-                    const pt = inCrop[i]; // [z, y, x, fid]
-                    positions[i * 3]     = pt[2]; // X = x
-                    positions[i * 3 + 1] = pt[1]; // Y = y
-                    positions[i * 3 + 2] = pt[0]; // Z = z
-
-                    const fid = pt[3] || 1;
-                    const hexStr = COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length] || '#00e5ff';
-                    const c = new THREE.Color(hexStr);
-                    colors[i * 3]     = c.r;
-                    colors[i * 3 + 1] = c.g;
-                    colors[i * 3 + 2] = c.b;
-                }
-            } else {
-                const stride = inCrop.length / targetCount;
-                for (let i = 0; i < targetCount; i++) {
-                    const srcIdx = Math.min(inCrop.length - 1, Math.floor(i * stride));
-                    const pt = inCrop[srcIdx]; // [z, y, x, fid]
-                    positions[i * 3]     = pt[2]; // X = x
-                    positions[i * 3 + 1] = pt[1]; // Y = y
-                    positions[i * 3 + 2] = pt[0]; // Z = z
-
-                    const fid = pt[3] || 1;
-                    const hexStr = COLOR_PALETTE[(fid - 1) % COLOR_PALETTE.length] || '#00e5ff';
-                    const c = new THREE.Color(hexStr);
-                    colors[i * 3]     = c.r;
-                    colors[i * 3 + 1] = c.g;
-                    colors[i * 3 + 2] = c.b;
+            if (voxels && voxels.length > 0) {
+                const voxelMap = new Map();
+                voxels.forEach(v => {
+                    const key = `${v[0]},${v[1]},${v[2]}`;
+                    voxelMap.set(key, v[3] || 1);
+                });
+                if (rawPointCloudFull && rawPointCloudFull.length > 0) {
+                    rawPointCloudFull.forEach(p => {
+                        const key = `${p[0]},${p[1]},${p[2]}`;
+                        if (voxelMap.has(key)) {
+                            p[3] = voxelMap.get(key);
+                        }
+                    });
+                    updateThreePointCloud(rawPointCloudFull);
                 }
             }
-
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-            const mat = new THREE.PointsMaterial({
-                vertexColors: true,
-                size: 2.8,
-                sizeAttenuation: true,
-                transparent: false,
-                opacity: 1.0,
-                depthTest: true,
-                depthWrite: true,
-                clippingPlanes: getCropClippingPlanes(),
-                clipShadows: true
-            });
-
-            coloredVolumeMesh = new THREE.Points(geo, mat);
-            coloredVolumeMesh.visible = (currentRenderMode === 'colored3d');
-            scene.add(coloredVolumeMesh);
         }
 
         function updateColoredVolumeClipping() {
-            if (!coloredVolumeMesh || !coloredVolumeMesh.material) return;
-            coloredVolumeMesh.material.clippingPlanes = getCropClippingPlanes();
-            coloredVolumeMesh.material.clipShadows = true;
-            coloredVolumeMesh.material.needsUpdate = true;
+            if (!pointCloudMesh) return;
+            const planes = getCropClippingPlanes();
+            pointCloudMesh.traverse(child => {
+                if (child.material) {
+                    child.material.clippingPlanes = planes;
+                    child.material.clipShadows = true;
+                    child.material.needsUpdate = true;
+                }
+            });
         }
 
-        async function setRenderMode(mode) {
-            currentRenderMode = mode;
-            const btnAnn = document.getElementById('btn-mode-annotate');
-            const btnCol = document.getElementById('btn-mode-colored3d');
+        let isCurvesAndNodesVisible = true;
+
+        function toggleCurvesAndNodes(visible) {
+            if (visible === undefined) {
+                const chk = document.getElementById('toggle-curves-nodes');
+                visible = chk ? chk.checked : true;
+            }
+            isCurvesAndNodesVisible = !!visible;
+            const chk = document.getElementById('toggle-curves-nodes');
+            if (chk) chk.checked = isCurvesAndNodesVisible;
+
+            if (curves3DGroup) curves3DGroup.visible = isCurvesAndNodesVisible;
+            if (seedPinsGroup) seedPinsGroup.visible = isCurvesAndNodesVisible;
+            faceMeshes.forEach(m => m.visible = isCurvesAndNodesVisible);
+
             const overlayHint = document.getElementById('three-overlay-hint');
-
-            if (mode === 'colored3d') {
-                if (btnAnn) btnAnn.classList.remove('active');
-                if (btnCol) btnCol.classList.add('active');
-
-                // In this mode, only colored 3D is shown and notes are hidden
-                if (seedPinsGroup) seedPinsGroup.visible = false;
-                if (curves3DGroup) curves3DGroup.visible = false;
-                faceMeshes.forEach(m => m.visible = false);
-                if (pointCloudMesh) pointCloudMesh.visible = false;
-
-                // If no colored voxels yet but seeds are placed, resolve them
-                if ((!latestColoredVoxels || latestColoredVoxels.length === 0) && seedsList.length > 0) {
-                    await resolveConnections();
-                } else if (!latestColoredVoxels || latestColoredVoxels.length === 0) {
-                    try {
-                        const res = await fetch('/api/patch/colored');
-                        const data = await res.json();
-                        if (data.colored_voxels && data.colored_voxels.length > 0) {
-                            updateColoredVolumePointCloud(data.colored_voxels);
-                        }
-                    } catch (e) {
-                        console.error("Failed to load colored volume:", e);
-                    }
+            if (overlayHint) {
+                if (isCurvesAndNodesVisible) {
+                    overlayHint.innerHTML = '🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom | <strong>V</strong>: Hide Curves/Nodes';
+                } else {
+                    overlayHint.innerHTML = '🎨 <strong>Curves & Nodes Hidden</strong> (Direct Colored 3D Voxels) | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom | <strong>V</strong>: Show Curves/Nodes';
                 }
-
-                if (coloredVolumeMesh) {
-                    coloredVolumeMesh.visible = true;
-                }
-                if (overlayHint) {
-                    overlayHint.innerHTML = '🎨 <strong>Resulting Colored 3D TIFF Mode</strong> (Notes Hidden) | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom | <strong>V</strong>: Annotate';
-                }
-                setPerfStatus('🎨 Mode: Resulting Colored 3D TIFF (Notes Hidden)');
-            } else {
-                if (btnAnn) btnAnn.classList.add('active');
-                if (btnCol) btnCol.classList.remove('active');
-
-                // Restore annotation mode: seeds/notes, centerlines, faces, and raw points
-                if (seedPinsGroup) seedPinsGroup.visible = true;
-                if (curves3DGroup) curves3DGroup.visible = true;
-                faceMeshes.forEach(m => m.visible = true);
-                if (pointCloudMesh) pointCloudMesh.visible = (currentPointDensity > 0);
-
-                if (coloredVolumeMesh) {
-                    coloredVolumeMesh.visible = false;
-                }
-                if (overlayHint) {
-                    overlayHint.innerHTML = '🖱️ <strong>Click 3D Face</strong>: Drop/Pair Seed | <strong>Drag</strong>: Rotate | <strong>Wheel</strong>: Zoom';
-                }
-                setPerfStatus('✏️ Mode: Annotation & Seeds');
             }
         }
 
         function toggleRenderMode() {
-            setRenderMode(currentRenderMode === 'annotate' ? 'colored3d' : 'annotate');
+            toggleCurvesAndNodes(!isCurvesAndNodesVisible);
+        }
+
+        function setRenderMode(mode) {
+            toggleCurvesAndNodes(mode !== 'colored3d');
         }
 
         let currentlyLoadedPatchIndex = null;
@@ -3052,10 +3017,13 @@ HTML_TEMPLATE = r"""
         function clearAllSeeds() {
             seedsList = [];
             activeFiberId = 1;
+            if (rawPointCloudFull) {
+                rawPointCloudFull.forEach(p => { p[3] = 0; });
+                updateThreePointCloud(rawPointCloudFull);
+            }
             updateThreeSeeds();
             updateSeedsDock();
             renderThree3DCurves(null);
-            updateColoredVolumePointCloud([]);
             initIdSelector();
         }
 
@@ -3115,6 +3083,10 @@ HTML_TEMPLATE = r"""
 
         function deleteFiberId(id) {
             seedsList = seedsList.filter(s => s.fiber_id !== id);
+            if (rawPointCloudFull) {
+                rawPointCloudFull.forEach(p => { if (p[3] === id) p[3] = 0; });
+                updateThreePointCloud(rawPointCloudFull);
+            }
             updateThreeSeeds();
             updateSeedsDock();
             initIdSelector();
@@ -3144,11 +3116,11 @@ HTML_TEMPLATE = r"""
                     document.getElementById('perf-badge').innerText = `⚡ Resolved ${data.num_fibers} Fibers in ${data.resolve_time_ms} ms!`;
                     updateSidebarInfo(undefined, undefined, undefined, `Resolved ${data.num_fibers} Fibers (${data.resolve_time_ms} ms)`);
                     renderThree3DCurves(data.curves_3d);
-                    if (data.colored_voxels) {
+                    if (data.point_cloud) {
+                        rawPointCloudFull = data.point_cloud;
+                        updateThreePointCloud(rawPointCloudFull);
+                    } else if (data.colored_voxels) {
                         updateColoredVolumePointCloud(data.colored_voxels);
-                    }
-                    if (currentRenderMode === 'colored3d') {
-                        setRenderMode('colored3d');
                     }
                 }
             } catch (err) {
