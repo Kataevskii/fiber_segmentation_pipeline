@@ -23,6 +23,7 @@ import time
 import numpy as np
 from scipy.ndimage import label as nd_label, convolve
 from scipy.spatial import cKDTree
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -50,6 +51,81 @@ class FiberFragment:
 
     def __post_init__(self):
         self.length = len(self.coords)
+
+
+def get_geodesic_diameter_endpoints(coords: np.ndarray, ep_coords: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Computes the geodesic (graph path) diameter endpoints along the 26-connected fragment skeleton.
+    Accurately handles non-convex geometries (spirals, hairpins, curved fibers, and loops)
+    where the true endpoints lie along the fiber path rather than straight-line Euclidean space.
+    """
+    n = len(coords)
+    if n <= 1:
+        return coords[0].astype(np.float32), coords[0].astype(np.float32)
+    if n == 2:
+        return coords[0].astype(np.float32), coords[1].astype(np.float32)
+
+    # 26-connectivity adjacency graph on the fragment voxels
+    tree = cKDTree(coords)
+    pairs = tree.query_pairs(r=1.75)  # 26-connectivity distance <= sqrt(3) ~ 1.732
+    adj = [[] for _ in range(n)]
+    for i, j in pairs:
+        adj[i].append(j)
+        adj[j].append(i)
+
+    def bfs_all(start_idx: int) -> tuple[int, list[int]]:
+        dist = [-1] * n
+        dist[start_idx] = 0
+        q = deque([start_idx])
+        furthest = start_idx
+        max_d = 0
+        while q:
+            u = q.popleft()
+            d_u = dist[u]
+            if d_u > max_d:
+                max_d = d_u
+                furthest = u
+            for v in adj[u]:
+                if dist[v] == -1:
+                    dist[v] = d_u + 1
+                    q.append(v)
+        return furthest, dist
+
+    # Case A: >= 2 candidate endpoints provided
+    if ep_coords is not None and len(ep_coords) >= 2:
+        _, ep_indices = tree.query(ep_coords, k=1)
+        ep_set = list(dict.fromkeys(ep_indices))
+        if len(ep_set) == 2:
+            return coords[ep_set[0]].astype(np.float32), coords[ep_set[1]].astype(np.float32)
+        elif len(ep_set) > 2:
+            # Pick pair among candidates with maximum graph geodesic distance
+            best_pair = (ep_set[0], ep_set[1])
+            max_d = -1
+            for c_idx in ep_set:
+                _, dist = bfs_all(int(c_idx))
+                for other_idx in ep_set:
+                    if dist[other_idx] > max_d:
+                        max_d = dist[other_idx]
+                        best_pair = (c_idx, other_idx)
+            return coords[best_pair[0]].astype(np.float32), coords[best_pair[1]].astype(np.float32)
+
+    # Case B: Exactly 1 candidate endpoint provided
+    if ep_coords is not None and len(ep_coords) == 1:
+        _, ep_idx = tree.query(ep_coords[0], k=1)
+        far_idx, _ = bfs_all(int(ep_idx))
+        return coords[int(ep_idx)].astype(np.float32), coords[far_idx].astype(np.float32)
+
+    # Case C: 0 candidate endpoints (closed loop / cycle)
+    p1, _ = bfs_all(0)
+    p2, _ = bfs_all(p1)
+    if p1 != p2:
+        return coords[p1].astype(np.float32), coords[p2].astype(np.float32)
+
+    # Fallback to Euclidean diameter if graph is disconnected
+    diff = coords[:, None, :] - coords[None, :, :]
+    dists_sq = np.sum(diff**2, axis=-1)
+    i, j = np.unravel_index(np.argmax(dists_sq), dists_sq.shape)
+    return coords[i].astype(np.float32), coords[j].astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -210,18 +286,11 @@ def build_fragment_graph(
             ezs = ep_z_splits[ep_i]
             eys = ep_y_splits[ep_i]
             exs = ep_x_splits[ep_i]
+            ep_pts = np.column_stack([ezs, eys, exs]).astype(np.float32) if len(ezs) > 0 else None
         else:
-            ezs, eys, exs = np.array([cz[0]]), np.array([cy[0]]), np.array([cx[0]])
+            ep_pts = None
 
-        if len(ezs) >= 2:
-            head_coord_raw = np.array([ezs[0], eys[0], exs[0]], dtype=np.float32)
-            tail_coord_raw = np.array([ezs[1], eys[1], exs[1]], dtype=np.float32)
-        elif len(ezs) == 1:
-            head_coord_raw = np.array([ezs[0], eys[0], exs[0]], dtype=np.float32)
-            tail_coord_raw = np.array([cz[-1], cy[-1], cx[-1]], dtype=np.float32)
-        else:
-            head_coord_raw = np.array([cz[0],  cy[0],  cx[0]],  dtype=np.float32)
-            tail_coord_raw = np.array([cz[-1], cy[-1], cx[-1]], dtype=np.float32)
+        head_coord_raw, tail_coord_raw = get_geodesic_diameter_endpoints(coords, ep_pts)
 
         # Durable endpoint orientations: 3D volumetric majority voting via Nematic Tensor
         # Sampled 5 voxels inside the body to completely avoid crossing/junction interference

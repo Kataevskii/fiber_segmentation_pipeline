@@ -16,6 +16,7 @@ from collections import defaultdict
 import numpy as np
 from scipy.ndimage import label as nd_label
 from scipy.spatial import cKDTree
+from skimage.draw import line_nd
 from skimage.segmentation import watershed
 
 try:
@@ -88,12 +89,10 @@ def build_labeled_skeleton(
         if chain_label == 0:
             continue
         for (coord_a, coord_b) in chain.bridge_coords:
-            n_steps = max(2, int(np.ceil(np.linalg.norm(coord_b - coord_a))) * 4)
-            t_vals = np.linspace(0, 1, n_steps)
-            bz = np.clip(np.round(coord_a[0] + t_vals * (coord_b[0] - coord_a[0])).astype(int), 0, D - 1)
-            by = np.clip(np.round(coord_a[1] + t_vals * (coord_b[1] - coord_a[1])).astype(int), 0, H - 1)
-            bx = np.clip(np.round(coord_a[2] + t_vals * (coord_b[2] - coord_a[2])).astype(int), 0, W - 1)
-            inst_skel[bz, by, bx] = chain_label
+            pt_a = np.clip(np.round(np.asarray(coord_a)).astype(int), 0, [D - 1, H - 1, W - 1])
+            pt_b = np.clip(np.round(np.asarray(coord_b)).astype(int), 0, [D - 1, H - 1, W - 1])
+            line_pts = line_nd(pt_a, pt_b, endpoint=True)
+            inst_skel[line_pts] = chain_label
 
     return inst_skel, len(kept_chains)
 
