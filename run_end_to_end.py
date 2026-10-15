@@ -39,6 +39,10 @@ def main():
     parser.add_argument('--out', type=str, default='outputs/fiber_resolution_final')
     parser.add_argument('--chunk-size', type=int, default=32, help="Slice chunk size for memory-safe streaming")
     parser.add_argument('--min-fiber-length', type=int, default=5, help="Minimum fiber centerline length in voxels (default: 5)")
+    parser.add_argument('--export-gad', action='store_true', default=False,
+                        help="Export resolved fibers to GeoDict .gad format (default: False, non-active)")
+    parser.add_argument('--gad-voxel-size', type=float, default=1e-06,
+                        help="Physical voxel size in meters for .gad export (default: 1e-06)")
     args = parser.parse_args()
 
     t_start = time.time()
@@ -66,6 +70,8 @@ def main():
     opt_params['cut_border'] = args.cut_border
     opt_params['min_fiber_length'] = args.min_fiber_length
     opt_params['min_chain_length'] = args.min_fiber_length
+    opt_params['export_gad'] = args.export_gad
+    opt_params['gad_voxel_size'] = args.gad_voxel_size
 
     metrics = run_topology_optimization(
         intensity_path=int_path,

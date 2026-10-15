@@ -42,7 +42,7 @@ from topology_optimizer.step4_optimize_topology import optimize_topology
 from topology_optimizer.step5_diffuse_labels import build_labeled_skeleton, diffuse_labels_voronoi, prune_short_fibers_and_repropagate
 from topology_optimizer.clean_border_artifacts import crop_and_separate_border_fibers, separate_broken_fibers
 from topology_optimizer.evaluate_against_gt import load_gt_centerlines_from_gad, compute_metrics
-from topology_optimizer.visualize_results import save_fiber_length_histogram, export_uint16_tiff
+from topology_optimizer.visualize_results import save_fiber_length_histogram, export_uint16_tiff, export_fibers_as_gad
 
 
 def get_default_volume(target_dir='data/fibers_to_segment'):
@@ -221,6 +221,10 @@ DEFAULT_PARAMS = dict(
     # Border cleaning
     cut_border        = 32,
     border_mode       = 'crop',
+
+    # GeoDict GAD export
+    export_gad        = False,
+    gad_voxel_size    = 1e-06,
 )
 
 
@@ -456,6 +460,20 @@ def run_direct_topology_optimization(
     export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
     export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
 
+    # Optional GeoDict GAD export
+    inst_gad_path = None
+    if params.get('export_gad', False):
+        inst_gad_path = os.path.join(out_dir, 'instance_fibers.gad')
+        v_size = float(params.get('gad_voxel_size', 1e-06))
+        export_fibers_as_gad(
+            inst_skel=inst_skel,
+            inst_vol=inst_vol,
+            out_path=inst_gad_path,
+            voxel_size=v_size,
+            is_periodic=False,
+            verbose=verbose
+        )
+
     unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
     chain_lengths = [int(c) for c in counts]
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
@@ -471,6 +489,8 @@ def run_direct_topology_optimization(
         'instance_skeleton_npy': inst_skel_path,
         'instance_skeleton_tif': inst_skel_tif_path,
     }
+    if inst_gad_path:
+        metrics['instance_fibers_gad'] = inst_gad_path
 
     print("\n" + "=" * 85, flush=True)
     print(f" TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
@@ -481,6 +501,8 @@ def run_direct_topology_optimization(
     print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
     print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
     print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
+    if inst_gad_path:
+        print(f"  - GeoDict GAD File (.gad):           {inst_gad_path}")
     print("=" * 85 + "\n", flush=True)
 
     return metrics
@@ -847,6 +869,20 @@ def run_chunked_topology_optimization(
     export_uint16_tiff(inst_vol, inst_vol_tif_path, verbose=verbose)
     export_uint16_tiff(inst_skel, inst_skel_tif_path, verbose=verbose)
 
+    # Optional GeoDict GAD export
+    inst_gad_path = None
+    if params.get('export_gad', False):
+        inst_gad_path = os.path.join(out_dir, 'instance_fibers.gad')
+        v_size = float(params.get('gad_voxel_size', 1e-06))
+        export_fibers_as_gad(
+            inst_skel=inst_skel,
+            inst_vol=inst_vol,
+            out_path=inst_gad_path,
+            voxel_size=v_size,
+            is_periodic=False,
+            verbose=verbose
+        )
+
     unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
     chain_lengths = [int(c) for c in counts]
 
@@ -863,6 +899,8 @@ def run_chunked_topology_optimization(
         'instance_skeleton_npy': inst_skel_path,
         'instance_skeleton_tif': inst_skel_tif_path,
     }
+    if inst_gad_path:
+        metrics['instance_fibers_gad'] = inst_gad_path
 
     print("\n" + "=" * 85, flush=True)
     print(f" CHUNKED TOPOLOGY OPTIMIZATION COMPLETE in {total_runtime:.1f}s")
@@ -873,6 +911,8 @@ def run_chunked_topology_optimization(
     print(f"  - Instance Volume TIFF (uint16):     {inst_vol_tif_path}")
     print(f"  - Labeled Skeleton Array (npy):      {inst_skel_path}")
     print(f"  - Labeled Skeleton TIFF (uint16):    {inst_skel_tif_path}")
+    if inst_gad_path:
+        print(f"  - GeoDict GAD File (.gad):           {inst_gad_path}")
     print("=" * 85 + "\n", flush=True)
 
     return metrics
@@ -951,6 +991,10 @@ if __name__ == '__main__':
                         help="Border cut mode: 'crop' (default, trims shape) or 'zero' (preserves shape, zeroes boundary)")
     parser.add_argument('--min-fiber-length', type=int, default=5,
                         help="Minimum fiber centerline length in voxels (default: 5). Shorter fibers are filtered before diffusion.")
+    parser.add_argument('--export-gad', action='store_true', default=False,
+                        help="Export resolved fibers to GeoDict .gad format (default: False, non-active)")
+    parser.add_argument('--gad-voxel-size', type=float, default=1e-06,
+                        help="Physical voxel size in meters for .gad export (default: 1e-06)")
     args = parser.parse_args()
 
     params = DEFAULT_PARAMS.copy()
@@ -960,6 +1004,8 @@ if __name__ == '__main__':
     params['border_mode'] = args.border_mode
     params['min_fiber_length'] = args.min_fiber_length
     params['min_chain_length'] = args.min_fiber_length
+    params['export_gad'] = args.export_gad
+    params['gad_voxel_size'] = args.gad_voxel_size
 
     run_topology_optimization(
         intensity_path=args.intensity,

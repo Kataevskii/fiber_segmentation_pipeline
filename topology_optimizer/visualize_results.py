@@ -193,3 +193,8 @@ def export_uint16_tiff(arr: np.ndarray, out_path: str, verbose: bool = True):
     if verbose:
         size_mb = os.path.getsize(out_path) / (1024 * 1024)
         print(f"  [export] Saved uint16 TIFF: {out_path} ({size_mb:.1f} MB in {time.time()-t0:.1f}s)", flush=True)
+
+
+# Re-export GeoDict GAD export function
+from .export_gad import export_fibers_as_gad
+
