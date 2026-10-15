@@ -6,9 +6,9 @@ class IntensityLoss(nn.Module):
     """
     Specialized Loss for IntensityUNet3D:
     Trains the network to predict a continuous 3D Gaussian potential field I(x) in [-1, 1].
-    - Foreground-weighted MSE
-    - Continuous Centerline Dice Loss
-    - Negative Intersection Dip Loss
+    - Foreground-weighted MSE (radial profile calibration)
+    - Continuous Centerline Soft Dice Loss (positive fibers)
+    - Continuous Negative Intersection Dip Soft Dice Loss (negative contact valleys)
     """
     def __init__(self, intensity_weight=1.0, dice_weight=1.0, neg_weight=0.5, eps=1e-8):
         super().__init__()
@@ -47,15 +47,25 @@ class IntensityLoss(nn.Module):
         bin_gt = (pos_gt > 0.30).float()
         bin_dice = (2.0 * (bin_pred * bin_gt).sum() + self.eps) / (bin_pred.sum() + bin_gt.sum() + self.eps)
 
-        # 3. Negative Intersection Dip Loss
+        # 3. Continuous Soft Negative Intersection Dip Dice Loss
         neg_gt = F.relu(-gt_intensity)
         neg_pred = F.relu(-pred_intensity)
-        neg_intersection_loss = self.mse(neg_pred, neg_gt)
+        neg_gt_energy = neg_gt.pow(2).sum()
+
+        if neg_gt_energy > 1e-4:
+            neg_intersection = (neg_pred * neg_gt).sum()
+            neg_dice_denom = neg_pred.pow(2).sum() + neg_gt_energy
+            neg_soft_dice = (2.0 * neg_intersection + self.eps) / (neg_dice_denom + self.eps)
+            neg_dice_loss = 1.0 - neg_soft_dice
+        else:
+            # When the batch has no ground-truth crossings, gently penalize false-positive dips
+            neg_dice_loss = neg_pred.pow(2).mean()
+            neg_soft_dice = torch.tensor(1.0, device=pred_intensity.device) if neg_pred.sum() < 1e-4 else torch.tensor(0.0, device=pred_intensity.device)
 
         total_loss = (
             self.intensity_weight * intensity_loss +
             self.dice_weight * dice_loss +
-            self.neg_weight * neg_intersection_loss
+            self.neg_weight * neg_dice_loss
         )
 
         metrics = {
@@ -64,7 +74,8 @@ class IntensityLoss(nn.Module):
             'dice_loss': dice_loss.item(),
             'dice_score': bin_dice.item(),
             'soft_dice': soft_dice.item(),
-            'neg_loss': neg_intersection_loss.item()
+            'neg_loss': neg_dice_loss.item(),
+            'neg_soft_dice': neg_soft_dice.item() if isinstance(neg_soft_dice, torch.Tensor) else float(neg_soft_dice)
         }
         return total_loss, metrics
 
