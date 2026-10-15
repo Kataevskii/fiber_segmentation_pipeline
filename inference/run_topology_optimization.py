@@ -408,6 +408,8 @@ def run_direct_topology_optimization(
         candidates=candidates,
         verbose=verbose,
     )
+    del candidates, ori_z, ori_y, ori_x, orientation
+    gc.collect()
     print(f"  Topology optimization complete in {time.time()-t5:.1f}s -- {len(chains)} continuous fibers resolved", flush=True)
 
     # -------------------------------------------------------------------------
@@ -433,6 +435,8 @@ def run_direct_topology_optimization(
         verbose=verbose
     )
     inst_skel.flush()
+    del fragments, chains
+    gc.collect()
 
     inst_vol = np.lib.format.open_memmap(inst_vol_path, mode='w+', dtype=np.int32, shape=(D, H, W))
     diffuse_labels_voronoi(
@@ -474,8 +478,15 @@ def run_direct_topology_optimization(
             verbose=verbose
         )
 
-    unique_ids, counts = np.unique(inst_skel[inst_skel > 0], return_counts=True)
-    chain_lengths = [int(c) for c in counts]
+    counts_map = defaultdict(int)
+    for z in range(D):
+        s_sl = inst_skel[z]
+        nz = s_sl[s_sl > 0]
+        if len(nz) > 0:
+            u_ids, u_cnts = np.unique(nz, return_counts=True)
+            for uid, ucnt in zip(u_ids, u_cnts):
+                counts_map[int(uid)] += int(ucnt)
+    chain_lengths = list(counts_map.values())
     save_fiber_length_histogram(chain_lengths, None, os.path.join(out_dir, 'fiber_length_histogram.png'))
 
     total_runtime = float(time.time() - t_total)

@@ -14,7 +14,7 @@ also labeled.
 import gc
 from collections import defaultdict
 import numpy as np
-from scipy.ndimage import label as nd_label
+from scipy.ndimage import label as nd_label, find_objects
 from scipy.spatial import cKDTree
 from skimage.draw import line_nd
 from skimage.segmentation import watershed
@@ -112,6 +112,8 @@ def diffuse_labels_voronoi(
     """
     Expand labeled skeleton to full fiber volume strictly through connected components.
     Guarantees color is NEVER diffused across empty background voxels or into unseeded components.
+    Uses memory-efficient slice streaming and connected-component LUT mapping to prevent OOM
+    on massive 3D volumes.
 
     Parameters
     ----------
@@ -131,31 +133,56 @@ def diffuse_labels_voronoi(
     """
     D, H, W = inst_skel.shape
 
-    # 1. Build foreground binary mask strictly from fiber voxels
+    # 1. Build foreground binary mask strictly from fiber voxels (slice-by-slice to prevent multi-GB RAM spikes)
+    full_fg = np.zeros((D, H, W), dtype=bool)
     if fg_mask is not None:
-        full_fg = (fg_mask > 0)
+        for z in range(D):
+            full_fg[z] = (fg_mask[z] > 0) | (inst_skel[z] > 0)
     elif volume is not None and intensity is not None:
-        full_fg = (volume > vol_threshold) | (intensity >= fg_threshold)
+        for z in range(D):
+            full_fg[z] = (volume[z] > vol_threshold) | (intensity[z] >= fg_threshold) | (inst_skel[z] > 0)
     elif volume is not None:
-        full_fg = (volume > vol_threshold)
+        for z in range(D):
+            full_fg[z] = (volume[z] > vol_threshold) | (inst_skel[z] > 0)
     elif intensity is not None:
-        full_fg = (intensity >= fg_threshold)
+        for z in range(D):
+            full_fg[z] = (intensity[z] >= fg_threshold) | (inst_skel[z] > 0)
     else:
-        full_fg = (inst_skel > 0)
+        for z in range(D):
+            full_fg[z] = (inst_skel[z] > 0)
 
-    # Use skeleton seeds that reside inside legitimate fiber foreground
-    seed_idx = np.nonzero((inst_skel > 0) & full_fg)
-    if len(seed_idx[0]) == 0:
-        seed_idx = np.nonzero(inst_skel > 0)
-        if len(seed_idx[0]) == 0:
-            if verbose:
-                print("  [diffuse] No labeled seeds -- returning zeros.", flush=True)
-            if out_vol_mmap is not None:
-                out_vol_mmap[:] = 0
-                return out_vol_mmap
-            return np.zeros_like(inst_skel, dtype=np.int32)
+    # Collect skeleton seeds slice-by-slice to avoid huge boolean index allocations
+    seed_coords_list = []
+    seed_labels_list = []
+    for z in range(D):
+        s_sl = inst_skel[z]
+        s_idx = np.nonzero(s_sl)
+        if len(s_idx[0]) > 0:
+            sy, sx = s_idx[0], s_idx[1]
+            sz = np.full(len(sy), z, dtype=np.int32)
+            seed_coords_list.append(np.column_stack([sz, sy, sx]))
+            seed_labels_list.append(s_sl[sy, sx])
+
+    if not seed_coords_list:
+        if verbose:
+            print("  [diffuse] No labeled seeds -- returning zeros.", flush=True)
+        if out_vol_mmap is not None:
+            out_vol_mmap[:] = 0
+            return out_vol_mmap
+        return np.zeros_like(inst_skel, dtype=np.int32)
+
+    skel_coords = np.vstack(seed_coords_list)
+    skel_labels = np.concatenate(seed_labels_list)
+    del seed_coords_list, seed_labels_list
+    gc.collect()
+
+    skel_z = skel_coords[:, 0]
+    skel_y = skel_coords[:, 1]
+    skel_x = skel_coords[:, 2]
 
     # 2. Extract 3D Connected Components on foreground
+    if verbose:
+        print("  [diffuse] Computing 3D connected components on foreground mask...", flush=True)
     cc_labels, num_cc = nd_label(full_fg, structure=np.ones((3, 3, 3), dtype=bool))
     if num_cc == 0:
         if out_vol_mmap is not None:
@@ -163,9 +190,11 @@ def diffuse_labels_voronoi(
             return out_vol_mmap
         return np.zeros_like(inst_skel, dtype=np.int32)
 
+    # full_fg is no longer needed since cc_labels > 0 defines foreground voxels
+    del full_fg
+    gc.collect()
+
     # 3. Associate skeleton seeds with their containing connected components
-    skel_z, skel_y, skel_x = seed_idx
-    skel_labels = inst_skel[skel_z, skel_y, skel_x]
     skel_ccs = cc_labels[skel_z, skel_y, skel_x]
 
     comp_seed_indices = defaultdict(list)
@@ -173,9 +202,28 @@ def diffuse_labels_voronoi(
         if c_id > 0:
             comp_seed_indices[c_id].append(i)
 
-    # 4. Group all foreground voxels by connected component
-    fg_z, fg_y, fg_x = np.nonzero(full_fg)
-    fg_ccs = cc_labels[fg_z, fg_y, fg_x]
+    # 4. Classify connected components: single-fiber vs multi-fiber
+    single_fiber_comps = {}
+    multi_fiber_comps = {}
+
+    for c_id, s_idxs in comp_seed_indices.items():
+        s_lbls = skel_labels[s_idxs]
+        unique_lbls = np.unique(s_lbls)
+        if len(unique_lbls) == 1:
+            single_fiber_comps[c_id] = unique_lbls[0]
+        else:
+            multi_fiber_comps[c_id] = (s_idxs, unique_lbls)
+
+    if verbose:
+        n_unseeded = num_cc - len(comp_seed_indices)
+        print(f"  [diffuse] {num_cc} connected components detected: "
+              f"{len(single_fiber_comps)} single-fiber, {len(multi_fiber_comps)} multi-fiber, "
+              f"{n_unseeded} unseeded (ignored).", flush=True)
+
+    # 5. Build lookup table for single-fiber components (0 for unseeded/multi-fiber)
+    lut = np.zeros(num_cc + 1, dtype=np.int32)
+    for c_id, lbl in single_fiber_comps.items():
+        lut[c_id] = lbl
 
     if out_vol_mmap is not None:
         instance_vol = out_vol_mmap
@@ -183,94 +231,118 @@ def diffuse_labels_voronoi(
     else:
         instance_vol = np.zeros_like(inst_skel, dtype=np.int32)
 
-    # Fast group-by CC using single sort
-    order = np.argsort(fg_ccs)
-    sorted_fg_ccs = fg_ccs[order]
-    sorted_fg_z = fg_z[order]
-    sorted_fg_y = fg_y[order]
-    sorted_fg_x = fg_x[order]
+    # 6. Multi-fiber components handling
+    objs = find_objects(cc_labels) if multi_fiber_comps else None
+    kdtree_comps = {}
+    any_watershed_done = False
 
-    unique_ccs, split_indices = np.unique(sorted_fg_ccs, return_index=True)
-    split_indices = list(split_indices) + [len(sorted_fg_ccs)]
+    for c_id, (s_idxs, unique_lbls) in multi_fiber_comps.items():
+        sl = objs[c_id - 1] if objs is not None and c_id <= len(objs) else None
+        z_slice = sl[0] if sl is not None else slice(0, D)
+        y_slice = sl[1] if sl is not None else slice(0, H)
+        x_slice = sl[2] if sl is not None else slice(0, W)
 
+        box_size = (z_slice.stop - z_slice.start) * (y_slice.stop - y_slice.start) * (x_slice.stop - x_slice.start)
+
+        labeled = False
+        if max_watershed_voxels > 0 and box_size <= max_watershed_voxels and sl is not None:
+            try:
+                sub_mask = (cc_labels[sl] == c_id)
+                s_z = skel_z[s_idxs] - z_slice.start
+                s_y = skel_y[s_idxs] - y_slice.start
+                s_x = skel_x[s_idxs] - x_slice.start
+                valid_seeds = (s_z >= 0) & (s_z < sub_mask.shape[0]) & \
+                              (s_y >= 0) & (s_y < sub_mask.shape[1]) & \
+                              (s_x >= 0) & (s_x < sub_mask.shape[2])
+
+                if np.any(valid_seeds):
+                    vs_z = s_z[valid_seeds]
+                    vs_y = s_y[valid_seeds]
+                    vs_x = s_x[valid_seeds]
+                    in_sub = sub_mask[vs_z, vs_y, vs_x]
+                    if np.any(in_sub):
+                        sub_markers = np.zeros(sub_mask.shape, dtype=np.int32)
+                        sub_markers[vs_z[in_sub], vs_y[in_sub], vs_x[in_sub]] = skel_labels[s_idxs][valid_seeds][in_sub]
+                        sub_labeled = watershed(np.zeros(sub_mask.shape, dtype=np.uint8), markers=sub_markers, mask=sub_mask, connectivity=3)
+
+                        target_chunk = instance_vol[sl]
+                        target_chunk[sub_mask] = sub_labeled[sub_mask]
+                        instance_vol[sl] = target_chunk
+                        labeled = True
+                        any_watershed_done = True
+            except (MemoryError, Exception):
+                labeled = False
+
+        if not labeled:
+            comp_s_coords = np.column_stack([skel_z[s_idxs], skel_y[s_idxs], skel_x[s_idxs]]).astype(np.float32)
+            tree = cKDTree(comp_s_coords)
+            kdtree_comps[c_id] = (tree, skel_labels[s_idxs], z_slice.start, z_slice.stop)
+
+    del objs
+    gc.collect()
+
+    active_comps_per_z = defaultdict(list)
+    for c_id, (tree, seed_lbls, z_start, z_stop) in kdtree_comps.items():
+        for z in range(z_start, z_stop):
+            active_comps_per_z[z].append(c_id)
+
+    # 7. Stream slice-by-slice across 3D volume (near-zero resident RAM footprint)
     n_labeled_voxels = 0
+    total_fg = 0
 
-    for idx, c_id in enumerate(unique_ccs):
-        if c_id == 0:
-            continue
-        start = split_indices[idx]
-        end = split_indices[idx + 1]
+    for z in range(D):
+        cc_sl = cc_labels[z]
 
-        # Connected components with NO seeds remain 0 (never cross empty space)
-        if c_id not in comp_seed_indices:
-            continue
+        # Single-fiber components via LUT
+        v_sl = lut[cc_sl]
 
-        comp_pts_z = sorted_fg_z[start:end]
-        comp_pts_y = sorted_fg_y[start:end]
-        comp_pts_x = sorted_fg_x[start:end]
+        # Preserve any watershed results in this slice
+        if any_watershed_done:
+            exist_sl = instance_vol[z]
+            exist_mask = (exist_sl > 0)
+            if exist_mask.any():
+                v_sl[exist_mask] = exist_sl[exist_mask]
 
-        seed_idxs = comp_seed_indices[c_id]
-        comp_seed_lbls = skel_labels[seed_idxs]
-        unique_comp_seed_lbls = np.unique(comp_seed_lbls)
+        # Multi-fiber components via KDTree
+        active_c_ids = active_comps_per_z.get(z, [])
+        for c_id in active_c_ids:
+            mask = (cc_sl == c_id)
+            if not mask.any():
+                continue
+            tree, seed_lbls, _, _ = kdtree_comps[c_id]
+            y_pts, x_pts = np.nonzero(mask)
+            n_pts = len(y_pts)
+            z_pts = np.full(n_pts, z, dtype=np.float32)
+            pts = np.column_stack([z_pts, y_pts.astype(np.float32), x_pts.astype(np.float32)])
 
-        if len(unique_comp_seed_lbls) == 1:
-            instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = unique_comp_seed_lbls[0]
-        else:
-            # Geodesic Voronoi distance transform strictly across fiber voxels
-            min_z, max_z = int(np.min(comp_pts_z)), int(np.max(comp_pts_z)) + 1
-            min_y, max_y = int(np.min(comp_pts_y)), int(np.max(comp_pts_y)) + 1
-            min_x, max_x = int(np.min(comp_pts_x)), int(np.max(comp_pts_x)) + 1
-            box_size = (max_z - min_z) * (max_y - min_y) * (max_x - min_x)
+            for start_i in range(0, n_pts, chunk_size):
+                end_i = min(start_i + chunk_size, n_pts)
+                sub_pts = pts[start_i:end_i]
+                _, nearest = tree.query(sub_pts, workers=-1)
+                v_sl[y_pts[start_i:end_i], x_pts[start_i:end_i]] = seed_lbls[nearest]
 
-            labeled = False
-            # Only attempt dense watershed for small components to prevent massive memory allocations / OOM
-            if max_watershed_voxels > 0 and box_size <= max_watershed_voxels:
-                try:
-                    sub_mask = (cc_labels[min_z:max_z, min_y:max_y, min_x:max_x] == c_id)
-                    s_z = skel_z[seed_idxs] - min_z
-                    s_y = skel_y[seed_idxs] - min_y
-                    s_x = skel_x[seed_idxs] - min_x
-                    valid_seeds = (s_z >= 0) & (s_z < sub_mask.shape[0]) & \
-                                  (s_y >= 0) & (s_y < sub_mask.shape[1]) & \
-                                  (s_x >= 0) & (s_x < sub_mask.shape[2])
+        # Hard-lock skeleton seeds on foreground in this slice
+        s_sl = inst_skel[z]
+        s_mask = (s_sl > 0)
+        if s_mask.any():
+            fg_s_mask = s_mask & (cc_sl > 0)
+            if fg_s_mask.any():
+                v_sl[fg_s_mask] = s_sl[fg_s_mask]
 
-                    if np.any(valid_seeds):
-                        vs_z = s_z[valid_seeds]
-                        vs_y = s_y[valid_seeds]
-                        vs_x = s_x[valid_seeds]
-                        in_sub = sub_mask[vs_z, vs_y, vs_x]
-                        if np.any(in_sub):
-                            sub_markers = np.zeros(sub_mask.shape, dtype=np.int32)
-                            sub_markers[vs_z[in_sub], vs_y[in_sub], vs_x[in_sub]] = comp_seed_lbls[valid_seeds][in_sub]
-                            sub_labeled = watershed(np.zeros(sub_mask.shape, dtype=np.uint8), markers=sub_markers, mask=sub_mask, connectivity=3)
-                            instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = sub_labeled[comp_pts_z - min_z, comp_pts_y - min_y, comp_pts_x - min_x]
-                            labeled = True
-                except (MemoryError, Exception):
-                    labeled = False
+        instance_vol[z] = v_sl
 
-            if not labeled:
-                comp_s_coords = np.column_stack([skel_z[seed_idxs], skel_y[seed_idxs], skel_x[seed_idxs]]).astype(np.float32)
-                tree = cKDTree(comp_s_coords)
-                comp_fg_coords = np.column_stack([comp_pts_z, comp_pts_y, comp_pts_x]).astype(np.float32)
-                _, nearest = tree.query(comp_fg_coords, workers=-1)
-                instance_vol[comp_pts_z, comp_pts_y, comp_pts_x] = comp_seed_lbls[nearest]
-
-        n_labeled_voxels += len(comp_pts_z)
-
-    # Hard-lock skeleton seeds on foreground voxels
-    valid_skel_in_fg = full_fg[skel_z, skel_y, skel_x]
-    instance_vol[skel_z[valid_skel_in_fg], skel_y[valid_skel_in_fg], skel_x[valid_skel_in_fg]] = skel_labels[valid_skel_in_fg]
+        n_labeled_voxels += int(np.count_nonzero(v_sl))
+        total_fg += int(np.count_nonzero(cc_sl > 0))
 
     if hasattr(instance_vol, 'flush'):
         instance_vol.flush()
 
     if verbose:
         n_fibers = int(np.max(skel_labels)) if len(skel_labels) > 0 else 0
-        total_fg = len(fg_z)
         pct = (n_labeled_voxels / total_fg * 100.0) if total_fg > 0 else 0.0
         print(f"  [diffuse] {n_fibers} fiber instances, {n_labeled_voxels}/{total_fg} foreground voxels labeled ({pct:.1f}%) across {len(comp_seed_indices)} seeded connected components", flush=True)
 
-    del cc_labels, full_fg, sorted_fg_ccs, sorted_fg_z, sorted_fg_y, sorted_fg_x
+    del cc_labels, kdtree_comps, lut, skel_coords, skel_labels
     gc.collect()
 
     return instance_vol
