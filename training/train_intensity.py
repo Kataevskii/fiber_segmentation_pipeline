@@ -224,7 +224,7 @@ def train_intensity_model(
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-    loss_fn = IntensityLoss(intensity_weight=1.0, dice_weight=1.0, neg_weight=0.5)
+    loss_fn = IntensityLoss(intensity_weight=1.0, dice_weight=1.0, neg_weight=1.0)
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
 
     best_val_dice = float('-inf')

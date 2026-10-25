@@ -10,7 +10,7 @@ class IntensityLoss(nn.Module):
     - Continuous Centerline Soft Dice Loss (positive fibers)
     - Continuous Negative Intersection Dip Soft Dice Loss (negative contact valleys)
     """
-    def __init__(self, intensity_weight=1.0, dice_weight=1.0, neg_weight=0.5, eps=1e-8):
+    def __init__(self, intensity_weight=1.0, dice_weight=1.0, neg_weight=1.0, eps=1e-8):
         super().__init__()
         self.intensity_weight = intensity_weight
         self.dice_weight = dice_weight
@@ -38,7 +38,8 @@ class IntensityLoss(nn.Module):
         pos_pred = F.relu(pred_intensity)
 
         intersection = (pos_pred * pos_gt).sum()
-        dice_denom = pos_pred.pow(2).sum() + pos_gt.pow(2).sum()
+        pos_gt_energy = pos_gt.pow(2).sum()
+        dice_denom = pos_pred.pow(2).sum() + pos_gt_energy
         soft_dice = (2.0 * intersection + self.eps) / (dice_denom + self.eps)
         dice_loss = 1.0 - soft_dice
 
@@ -49,23 +50,28 @@ class IntensityLoss(nn.Module):
 
         # 3. Continuous Soft Negative Intersection Dip Dice Loss
         neg_gt = F.relu(-gt_intensity)
-        neg_pred = F.relu(-pred_intensity)
+        neg_pred = F.relu(-pred_intensity) * fg_mask
         neg_gt_energy = neg_gt.pow(2).sum()
 
         if neg_gt_energy > 1e-4:
             neg_intersection = (neg_pred * neg_gt).sum()
             neg_dice_denom = neg_pred.pow(2).sum() + neg_gt_energy
             neg_soft_dice = (2.0 * neg_intersection + self.eps) / (neg_dice_denom + self.eps)
-            neg_dice_loss = 1.0 - neg_soft_dice
+            raw_neg_dice_loss = 1.0 - neg_soft_dice
+            # Dynamically normalize by relative target signal ratio (E_neg / E_pos).
+            # This cancels the 1/N_neg in the Dice gradient denominator, ensuring
+            # per-voxel gradients naturally match positive fiber centerlines.
+            signal_ratio = neg_gt_energy / (pos_gt_energy + self.eps)
+            neg_loss = signal_ratio * raw_neg_dice_loss
         else:
-            # When the batch has no ground-truth crossings, gently penalize false-positive dips
-            neg_dice_loss = neg_pred.pow(2).mean()
-            neg_soft_dice = torch.tensor(1.0, device=pred_intensity.device) if neg_pred.sum() < 1e-4 else torch.tensor(0.0, device=pred_intensity.device)
+            # When the batch has no ground-truth crossings, gently penalize false-positive dips inside foreground
+            neg_loss = (F.relu(-pred_intensity).pow(2) * fg_mask).mean()
+            neg_soft_dice = torch.tensor(1.0, device=pred_intensity.device) if (neg_pred.sum() < 1e-4) else torch.tensor(0.0, device=pred_intensity.device)
 
         total_loss = (
             self.intensity_weight * intensity_loss +
             self.dice_weight * dice_loss +
-            self.neg_weight * neg_dice_loss
+            self.neg_weight * neg_loss
         )
 
         metrics = {
@@ -74,7 +80,7 @@ class IntensityLoss(nn.Module):
             'dice_loss': dice_loss.item(),
             'dice_score': bin_dice.item(),
             'soft_dice': soft_dice.item(),
-            'neg_loss': neg_dice_loss.item(),
+            'neg_loss': neg_loss.item(),
             'neg_soft_dice': neg_soft_dice.item() if isinstance(neg_soft_dice, torch.Tensor) else float(neg_soft_dice)
         }
         return total_loss, metrics
